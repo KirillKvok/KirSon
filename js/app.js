@@ -407,6 +407,7 @@ function show(image) {
 // higher-resolution render used when zoomed in replaces it without any jump.
 const stage = $("stage"), box = $("frame-box"), fitBtn = $("btn-fit");
 const zoom = { s: 1, tx: 0, ty: 0 };
+const applied = { tx: 0, ty: 0 }; // the transform currently on screen
 
 function fitCanvas() {
   if (view.hidden || !view.width) return;
@@ -429,6 +430,8 @@ function clampZoom() {
 let detailWanted = false;
 function applyZoom() {
   box.style.transform = zoom.s === 1 ? "" : `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.s})`;
+  applied.tx = zoom.s === 1 ? 0 : zoom.tx;
+  applied.ty = zoom.s === 1 ? 0 : zoom.ty;
   fitBtn.hidden = zoom.s <= 1.01;
   const want = zoom.s > 1.5;
   if (want !== detailWanted) { // sharper render once the zoom crosses 1.5x
@@ -440,8 +443,12 @@ function applyZoom() {
 
 // zoom by factor f keeping the screen point (cx, cy) in place
 function zoomAt(cx, cy, s) {
-  const o = box.getBoundingClientRect(); // includes the current transform
-  const lx = (cx - o.left) / zoom.s, ly = (cy - o.top) / zoom.s; // point in unscaled box coordinates
+  // The box's untransformed position (the rect includes the transform on screen right now,
+  // which during a pinch is not the `zoom` state being computed), then the point under
+  // (cx, cy) in unscaled box coordinates for the current `zoom` state.
+  const o = box.getBoundingClientRect();
+  const ox = o.left - applied.tx, oy = o.top - applied.ty;
+  const lx = (cx - ox - zoom.tx) / zoom.s, ly = (cy - oy - zoom.ty) / zoom.s;
   const ns = Math.min(MAX_ZOOM, Math.max(1, s));
   zoom.tx += (zoom.s - ns) * lx;
   zoom.ty += (zoom.s - ns) * ly;
