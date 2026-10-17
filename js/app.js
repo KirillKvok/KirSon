@@ -4,6 +4,9 @@ import "./ops/index.js";
 import { ORDER } from "./ops/index.js";
 import { REGISTRY, Pipeline, defaults } from "./core/pipeline.js";
 import { FILTER_NAMES } from "./ops/filters.js";
+import { LIP_COLORS, BLUSH_COLORS } from "./ops/makeup.js";
+import { HAIR_NAMES } from "./ops/hair.js";
+import { REPLACE } from "./ops/background.js";
 import { Engine } from "./engine.js";
 import { analyze } from "./face/analysis.js";
 
@@ -31,6 +34,32 @@ const TABS = [
     name: "Фигура",
     tools: [["body", "waist"], ["body", "hips"], ["body", "legs"], ["body", "length"], ["body", "arms"],
       ["body", "shoulders"], ["body", "neck"]].map(([op, param]) => ({ op, param })),
+  },
+  {
+    name: "Макияж",
+    tools: [
+      { op: "makeup", param: "lips" },
+      ...Object.keys(LIP_COLORS).map((n, k) => ({ op: "makeup", param: "lip_color", option: k, label: n })),
+      { op: "makeup", param: "blush" },
+      ...Object.keys(BLUSH_COLORS).map((n, k) => ({ op: "makeup", param: "blush_color", option: k, label: n })),
+      { op: "makeup", param: "brows" }, { op: "makeup", param: "eyeliner" }, { op: "makeup", param: "contour" },
+    ],
+  },
+  {
+    name: "Волосы",
+    tools: [
+      ...HAIR_NAMES.map((n, k) => ({ op: "hair", param: "color", option: k, label: k ? n : "Свой цвет" })),
+      { op: "hair", param: "amount" }, { op: "hair", param: "shine" }, { op: "hair", param: "volume" },
+      { op: "hair", param: "roots" },
+    ],
+  },
+  {
+    name: "Фон",
+    tools: [
+      { op: "background", param: "blur" }, { op: "background", param: "brightness" }, { op: "background", param: "saturation" },
+      ...REPLACE.map((n, k) => ({ op: "background", param: "replace", option: k, label: k ? n : "Свой фон",
+        action: n === "Своя картинка" ? "pickBackground" : null })),
+    ],
   },
   {
     name: "Коррекция",
@@ -147,6 +176,7 @@ function renderTools() {
     b.className = "tool" + (on ? " on" : "") + (changed ? " changed" : "");
     b.innerHTML = `<span class="dot"></span>${toolLabel(t)}`;
     b.onclick = () => {
+      if (t.action === "pickBackground") return $("bg-file").click();
       if (isChoice) {
         setValue(t.op, t.param, t.option);
         pushHistory();
@@ -320,6 +350,20 @@ async function runAnalysis(imageId) {
 }
 
 $("file").addEventListener("change", (e) => openFile(e.target.files[0]));
+$("bg-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const pic = await decode(file);
+  const [w, h] = scaled(pic, 4096);
+  const pid = `pic-${Date.now()}`;
+  engine.setPicture(pid, imageData(pic, w, h));
+  setValue("background", "image", pid);
+  setValue("background", "replace", REPLACE.indexOf("Своя картинка"));
+  pushHistory();
+  renderTools();
+  requestRender();
+  e.target.value = "";
+});
 for (const id of ["btn-open", "btn-open-big"]) $(id).onclick = () => $("file").click();
 $("btn-undo").onclick = undo;
 $("btn-redo").onclick = redo;

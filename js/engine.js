@@ -34,6 +34,11 @@ export class Engine {
       [buf]);
   }
 
+  setPicture(pid, imageData) {
+    const buf = imageData.data.slice().buffer;
+    this.worker.postMessage({ type: "picture", pid, w: imageData.width, h: imageData.height, data: buf }, [buf]);
+  }
+
   setAnalysis(analysis) {
     this.worker.postMessage({ type: "analysis", analysis });
   }
@@ -45,6 +50,11 @@ export class Engine {
   async render(key, state) {
     const m = await this._call({ type: "render", key, state });
     return { image: new ImageData(new Uint8ClampedArray(m.data), m.w, m.h), ms: m.ms };
+  }
+
+  async mask(key, name) {
+    const m = await this._call({ type: "mask", key, name });
+    return new ImageData(new Uint8ClampedArray(m.data), m.w, m.h);
   }
 
   // Preview: only the newest request matters.

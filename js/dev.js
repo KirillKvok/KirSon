@@ -65,3 +65,18 @@ export async function grid(name, variants, { crop = "face", key = "preview", til
   const res = await fetch(`/__save?name=${encodeURIComponent(name)}`, { method: "POST", body: blob });
   return res.text();
 }
+
+// masks side by side with the photo: names = ["hair", "lips", ...]
+export async function masks(name, names, { tile = 400 } = {}) {
+  const { app, engine } = K();
+  const imgs = [canvasFrom(app.preview)];
+  for (const n of names) imgs.push(canvasFrom(await engine.mask("preview", n)));
+  const W = imgs[0].width, H = imgs[0].height, th = Math.round((tile * H) / W);
+  const out = document.createElement("canvas");
+  out.width = tile * imgs.length;
+  out.height = th;
+  const g = out.getContext("2d");
+  imgs.forEach((c, k) => g.drawImage(c, k * tile, 0, tile, th));
+  const blob = await new Promise((r) => out.toBlob(r, "image/jpeg", 0.9));
+  return (await fetch(`/__save?name=${encodeURIComponent(name)}`, { method: "POST", body: blob })).text();
+}
