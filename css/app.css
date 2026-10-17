@@ -1,0 +1,218 @@
+/* KirSon web — the desktop's "Liquid Glass" look on a phone: warm ivory / deep chocolate,
+   frosted panels, Manrope. Light and dark follow the phone's setting. */
+@font-face {
+  font-family: "Manrope";
+  src: url("../fonts/Manrope-Variable.ttf") format("truetype");
+  font-weight: 200 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  src: url("../fonts/CormorantGaramond-Variable.ttf") format("truetype");
+  font-weight: 300 700;
+  font-display: swap;
+}
+
+:root {
+  --bg: #F6F2ED;
+  --bg2: #EFE8E1;
+  --text: #34343A;
+  --muted: #73737B;
+  --accent: #3B241C;
+  --accent2: #52372B;
+  --on-accent: #F6F2ED;
+  --glass: rgba(255, 255, 255, 0.62);
+  --glass-border: rgba(255, 255, 255, 0.9);
+  --line: #D9DCE4;
+  --chip: rgba(255, 255, 255, 0.7);
+  --rail: rgba(52, 52, 58, 0.14);
+  --shadow: 0 10px 30px rgba(59, 36, 28, 0.12);
+  --photo-bg: #EAE3DB;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1E1512;
+    --bg2: #160F0D;
+    --text: #ECE5DE;
+    --muted: #A99D95;
+    --accent: #F3E9E1;
+    --accent2: #D9C3B4;
+    --on-accent: #2A1B15;
+    --glass: rgba(255, 255, 255, 0.07);
+    --glass-border: rgba(255, 255, 255, 0.12);
+    --line: rgba(255, 255, 255, 0.14);
+    --chip: rgba(255, 255, 255, 0.08);
+    --rail: rgba(255, 255, 255, 0.18);
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    --photo-bg: #120C0A;
+  }
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: "Manrope", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--text);
+  background: radial-gradient(120% 80% at 10% 0%, rgba(246, 198, 214, 0.25), transparent 60%),
+              radial-gradient(100% 70% at 100% 100%, rgba(201, 221, 247, 0.22), transparent 60%),
+              var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  overscroll-behavior: none;
+}
+button { font: inherit; color: inherit; }
+
+.glass {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  backdrop-filter: blur(22px) saturate(1.4);
+  box-shadow: var(--shadow);
+}
+
+/* top bar */
+.bar {
+  margin: calc(env(safe-area-inset-top) + 8px) 10px 0;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 12px;
+  gap: 8px;
+  z-index: 2;
+}
+.brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mono { width: 28px; height: 28px; }
+.word { font-family: "Cormorant Garamond", serif; font-weight: 600; font-size: 22px; color: var(--accent); }
+.actions { display: flex; align-items: center; gap: 4px; }
+.icon {
+  width: 40px; height: 40px; border-radius: 12px; border: 0; background: transparent;
+  display: grid; place-items: center; cursor: pointer;
+}
+.icon svg { width: 22px; height: 22px; fill: none; stroke: var(--text); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.icon:disabled svg { stroke: var(--muted); opacity: 0.45; }
+.icon:active { background: var(--chip); }
+.primary {
+  border: 0; border-radius: 12px; padding: 10px 14px; font-weight: 650; cursor: pointer;
+  background: var(--accent); color: var(--on-accent);
+}
+.primary:disabled { opacity: 0.4; }
+.primary.big { padding: 14px 26px; font-size: 17px; border-radius: 16px; }
+
+/* photo area */
+main {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+}
+canvas#view {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  touch-action: none;
+  background: var(--photo-bg);
+}
+.welcome {
+  max-width: 340px; border-radius: 26px; padding: 30px 26px 26px; text-align: center;
+}
+.welcome .mono-big { width: 84px; height: 84px; }
+.welcome h1 { font-family: "Cormorant Garamond", serif; font-weight: 600; font-size: 34px; margin: 10px 0 6px; color: var(--accent); }
+.welcome p { color: var(--muted); font-size: 15px; line-height: 1.45; margin: 0 0 20px; }
+.chip-btn {
+  position: absolute; right: 18px; bottom: 18px; border-radius: 999px; padding: 9px 16px;
+  font-weight: 650; font-size: 14px; color: var(--text); cursor: pointer;
+  touch-action: none;
+}
+.chip-btn.on { background: var(--accent); color: var(--on-accent); }
+.busy { position: absolute; top: 16px; right: 18px; }
+.busy span {
+  display: block; width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--rail); border-top-color: var(--accent); animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .busy span { animation-duration: 3s; } }
+.toast {
+  position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+  background: var(--accent); color: var(--on-accent); border-radius: 12px; padding: 9px 14px;
+  font-size: 14px; max-width: 90%; text-align: center;
+}
+
+/* bottom panel: one slider, the tools of the tab, the tabs */
+.panel {
+  margin: 0 10px calc(env(safe-area-inset-bottom) + 8px);
+  border-radius: 22px;
+  padding: 10px 0 6px;
+  z-index: 2;
+}
+.slider-row { display: flex; align-items: center; gap: 10px; padding: 2px 14px 8px; min-height: 40px; }
+.tool-label { font-size: 13px; color: var(--muted); width: 92px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tool-value {
+  width: 48px; flex: none; text-align: center; font-weight: 700; font-size: 14px; color: var(--accent);
+  font-variant-numeric: tabular-nums; background: var(--chip); border: 1px solid var(--line);
+  border-radius: 10px; padding: 5px 0; cursor: pointer;
+}
+input[type=range] {
+  flex: 1; -webkit-appearance: none; appearance: none; height: 28px; background: transparent; margin: 0;
+}
+input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--rail); }
+input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--rail); }
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 26px; height: 26px; margin-top: -11px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--accent); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+input[type=range]::-moz-range-thumb {
+  width: 22px; height: 22px; border-radius: 50%; background: #fff; border: 2px solid var(--accent);
+}
+
+.tools, .tabs {
+  display: flex; gap: 8px; overflow-x: auto; padding: 0 12px; scrollbar-width: none;
+  scroll-snap-type: x proximity;
+}
+.tools::-webkit-scrollbar, .tabs::-webkit-scrollbar { display: none; }
+.tools { padding-bottom: 8px; }
+.tool {
+  flex: none; border: 1px solid var(--line); background: var(--chip); border-radius: 14px;
+  padding: 8px 12px; font-size: 13px; font-weight: 550; cursor: pointer; white-space: nowrap;
+  display: flex; align-items: center; gap: 6px; scroll-snap-align: start;
+}
+.tool .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: 0; }
+.tool.changed .dot { opacity: 1; }
+.tool.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.tool.on .dot { background: var(--on-accent); }
+.tabs { border-top: 1px solid var(--line); padding-top: 6px; }
+.tab {
+  flex: none; border: 0; background: transparent; padding: 8px 10px; font-size: 14px; font-weight: 600;
+  color: var(--muted); cursor: pointer; border-radius: 10px; scroll-snap-align: start;
+}
+.tab.on { color: var(--accent); background: var(--chip); }
+
+@media (min-width: 900px) {
+  /* desktop browsers: the panel on the right */
+  body { flex-direction: row; flex-wrap: wrap; }
+  .bar { flex: 0 0 calc(100% - 20px); }
+  main { height: calc(100% - 80px); }
+  .panel { width: 420px; align-self: flex-end; margin: 0 10px 10px 0; }
+}
+.toast { display: flex; align-items: center; gap: 10px; }
+.toast[hidden] { display: none; }
+.toast-btn {
+  border: 0; border-radius: 10px; padding: 7px 12px; font-weight: 700; cursor: pointer;
+  background: var(--on-accent); color: var(--accent);
+}
+[hidden] { display: none !important; }
+@media (max-width: 420px) {
+  .bar { padding: 5px 5px 5px 10px; }
+  .word { font-size: 20px; }
+  .mono { width: 24px; height: 24px; }
+  .actions { gap: 0; }
+  .icon { width: 36px; height: 38px; }
+  .bar .primary { padding: 9px 11px; font-size: 14px; }
+}

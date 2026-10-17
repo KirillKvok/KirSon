@@ -1,0 +1,17 @@
+{
+  "name": "KirSon — ретушь селфи",
+  "short_name": "KirSon",
+  "description": "Естественная ретушь лица и фигуры. Фото обрабатываются на устройстве.",
+  "lang": "ru",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F6F2ED",
+  "theme_color": "#F6F2ED",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
