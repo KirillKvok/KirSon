@@ -22,6 +22,12 @@ const TABS = [
       ["skin_natural", "texture"], ["skin_natural", "volume"], ["skin", "body"]].map(([op, param]) => ({ op, param })),
   },
   {
+    name: "Форма",
+    tools: [["face_shape", "slim"], ["face_shape", "jaw"], ["face_shape", "chin"], ["face_shape", "eyes"],
+      ["face_shape", "eye_open"], ["face_shape", "nose"], ["face_shape", "lips"], ["face_shape", "smile"],
+      ["face_shape", "symmetry"]].map(([op, param]) => ({ op, param })),
+  },
+  {
     name: "Коррекция",
     tools: [["light", "shadows"], ["light", "highlights"], ["brightness", "amount"], ["contrast", "amount"],
       ["color", "saturation"], ["color", "vibrance"], ["color", "temperature"], ["color", "tint"],

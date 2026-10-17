@@ -5,6 +5,7 @@ import "./filters.js";
 import "./skin.js";
 import "./tone.js";
 import "./detail.js";
+import "./shape.js";
 
 export const ORDER = ["face_select", "mask_edit", "heal", "skin", "skin_natural", "skin_tone", "face_light",
   "face_detail", "teeth_eyes", "makeup", "hair", "face_shape", "body", "background", "object", "liquify",
