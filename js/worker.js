@@ -7,6 +7,7 @@ import { Context, Pipeline } from "./core/pipeline.js";
 import { PICTURES } from "./ops/background.js";
 import { getMask } from "./face/masks.js";
 import { suggest } from "./core/auto.js";
+import { geometry, frameActive } from "./ops/crop.js";
 
 const images = new Map(); // key -> {img, ctx}
 let analysis = null; // the photo's face / person analysis (normalised), shared by all sizes
@@ -70,8 +71,15 @@ self.onmessage = (e) => {
       const t = performance.now();
       const out = Pipeline.fromJSON(m.state).run(entry.img, entry.ctx);
       const rgba = rgbToRgba(out.data, out.w, out.h);
-      self.postMessage({ type: "result", id: m.id, w: out.w, h: out.h, data: rgba.buffer, ms: performance.now() - t },
-        [rgba.buffer]);
+      const msg = { type: "result", id: m.id, w: out.w, h: out.h, data: rgba.buffer, ms: performance.now() - t };
+      const transfer = [rgba.buffer];
+      const frame = m.state.steps.find((s) => s.op === "crop");
+      if (m.before && frame && frame.enabled !== false && frameActive({ ...frame.values })) {
+        const b = geometry(entry.img, frame.values), brgba = rgbToRgba(b.data, b.w, b.h);
+        Object.assign(msg, { bw: b.w, bh: b.h, before: brgba.buffer });
+        transfer.push(brgba.buffer);
+      }
+      self.postMessage(msg, transfer);
     }
   } catch (err) {
     self.postMessage({ type: "error", id: m.id, message: String(err && err.stack || err) });

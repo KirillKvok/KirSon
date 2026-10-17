@@ -8,12 +8,14 @@ import { LIP_COLORS, BLUSH_COLORS } from "./ops/makeup.js";
 import { HAIR_NAMES } from "./ops/hair.js";
 import { REPLACE } from "./ops/background.js";
 import { LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
+import { ASPECTS, rectOf } from "./ops/crop.js";
 import { Engine } from "./engine.js";
 import { analyze } from "./face/analysis.js";
 
 const PREVIEW = 1280; // preview long side (as on the desktop)
 const FAST = 640;     // while a slider is held
 const MAX_PIXELS = 16_000_000; // iOS canvas limit is 16.7 MP
+const EXPORT_PHONE = 3200; // long side of the saved photo on phones (memory)
 
 // Tabs: what each one offers. {op, param} = a slider tool; {op, param, option} = a choice chip.
 const TABS = [
@@ -73,6 +75,16 @@ const TABS = [
     ],
   },
   {
+    name: "Кадр",
+    tools: [
+      ...Object.keys(ASPECTS).map((name) => ({ kind: "aspect", name, label: name })),
+      { op: "crop", param: "angle", label: "Наклон" },
+      { kind: "rotate", label: "⟳ 90°" },
+      { kind: "flip", label: "Отразить" },
+      { kind: "frameReset", label: "Сбросить кадр" },
+    ],
+  },
+  {
     name: "Коррекция",
     tools: [["light", "shadows"], ["light", "highlights"], ["brightness", "amount"], ["contrast", "amount"],
       ["color", "saturation"], ["color", "vibrance"], ["color", "temperature"], ["color", "tint"],
@@ -99,6 +111,8 @@ const app = {
   future: [],
   tab: 0,
   tool: null,       // current slider tool {op, param, label}
+  aspect: "Свободно", // crop frame proportions
+  before: null,     // the original in the result's frame (when cropped)
   look: null,       // chosen look and its strength (0..150 %)
   lookStrength: 100,
   original: null,   // full-size ImageData
@@ -170,8 +184,18 @@ function renderTabs() {
   });
 }
 
+function canvasOf(imageData) {
+  const c = document.createElement("canvas");
+  c.width = imageData.width;
+  c.height = imageData.height;
+  c.getContext("2d").putImageData(imageData, 0, 0);
+  return c;
+}
+
 function selectTab(k) {
+  const wasFrame = frameTab();
   app.tab = k;
+  if (wasFrame !== frameTab()) requestRender(); // the frame editor shows the whole photo
   app.tool = TABS[k].tools.find((t) => (t.option === undefined && !t.kind) || t.kind === "strength") || null;
   renderTabs();
   renderTools();
@@ -234,8 +258,18 @@ function kindTool(t, b) {
       pushHistory();
       requestRender();
     } else if (t.kind === "strength") app.tool = t;
+    else if (t.kind === "aspect") setAspect(t.name);
+    else if (t.kind === "rotate") editFrame({ rot90: ((frameValues().rot90 || 0) + 1) % 4, x0: 0, y0: 0, x1: 1, y1: 1 }, true);
+    else if (t.kind === "flip") {
+      const f = frameValues();
+      editFrame({ flip: f.flip >= 0.5 ? 0 : 1, x0: 1 - (f.x1 ?? 1), x1: 1 - (f.x0 ?? 0) });
+    } else if (t.kind === "frameReset") {
+      app.aspect = "Свободно";
+      editFrame({ rot90: 0, flip: 0, angle: 0, x0: 0, y0: 0, x1: 1, y1: 1 });
+    }
     renderTools();
   };
+  if (t.kind === "aspect" && app.aspect === t.name) b.classList.add("on");
 }
 
 function renderTools() {
@@ -325,26 +359,123 @@ $("tool-value").addEventListener("click", () => {
 });
 
 // --- rendering ---------------------------------------------------------------------------------
-function requestRender() {
-  if (!app.preview) return;
-  engine.preview(app.dragging ? "fast" : "preview", app.pipeline.toJSON());
+const frameTab = () => TABS[app.tab].name === "Кадр";
+const frameValues = () => app.pipeline.step("crop").values;
+
+function previewState() {
+  const st = app.pipeline.toJSON();
+  if (frameTab()) { // the editor shows the whole (rotated) photo with the frame over it
+    const c = st.steps.find((s) => s.op === "crop");
+    c.values = { ...c.values, x0: 0, y0: 0, x1: 1, y1: 1 };
+  }
+  return st;
 }
 
-engine.onPreview = (image, ms) => {
+function requestRender() {
+  if (!app.preview) return;
+  engine.preview(app.dragging ? "fast" : "preview", previewState());
+}
+
+engine.onPreview = (image, ms, before, key) => {
   app.result = image;
+  app.before = before;
+  app.fastScale = key === "fast" ? app.preview.width / app.fastWidth : 1;
   if (!beforeHeld) show(image);
   $("busy").hidden = true;
+  updateFrame();
   console.debug(`preview ${ms.toFixed(0)} ms`);
 };
 
 function show(image) {
-  if (view.width !== app.preview.width || view.height !== app.preview.height) {
-    view.width = app.preview.width;
-    view.height = app.preview.height;
+  const k = app.fastScale || 1, w = Math.round(image.width * k), h = Math.round(image.height * k);
+  if (view.width !== w || view.height !== h) {
+    view.width = w;
+    view.height = h;
   }
   if (image.width === view.width) vctx.putImageData(image, 0, 0);
   else createImageBitmap(image).then((bmp) => vctx.drawImage(bmp, 0, 0, view.width, view.height));
 }
+
+// --- crop frame editor -------------------------------------------------------------------------
+const frameEl = $("frame");
+function updateFrame() {
+  const on = frameTab() && app.preview && !view.hidden;
+  frameEl.hidden = !on;
+  if (!on) return;
+  const [x0, y0, x1, y1] = rectOf(frameValues());
+  const r = view.getBoundingClientRect(), box = $("frame-box").getBoundingClientRect();
+  Object.assign(frameEl.style, {
+    left: `${r.left - box.left + x0 * r.width}px`, top: `${r.top - box.top + y0 * r.height}px`,
+    width: `${(x1 - x0) * r.width}px`, height: `${(y1 - y0) * r.height}px`,
+  });
+}
+
+function editFrame(vals, refit = false) {
+  Object.assign(frameValues(), vals);
+  if (refit && ASPECTS[app.aspect] !== null) return setAspect(app.aspect);
+  pushHistory();
+  requestRender();
+  updateFrame();
+}
+
+// aspect as a normalised width/height ratio of the frame being cropped
+function aspectQ(name) {
+  const ratio = ASPECTS[name];
+  if (ratio === null || !app.result) return null;
+  return ratio === 0 ? 1 : (ratio * view.height) / view.width;
+}
+
+function setAspect(name) {
+  app.aspect = name;
+  const q = aspectQ(name);
+  if (q === null) return renderTools();
+  const [nw, nh] = q <= 1 ? [q, 1] : [1, 1 / q];
+  editFrame({ x0: 0.5 - nw / 2, y0: 0.5 - nh / 2, x1: 0.5 + nw / 2, y1: 0.5 + nh / 2 });
+}
+
+let drag = null;
+frameEl.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  frameEl.setPointerCapture(e.pointerId);
+  const h = e.target.classList.contains("h") ? [...e.target.classList].find((c) => c !== "h") : "move";
+  drag = { h, x: e.clientX, y: e.clientY, start: rectOf(frameValues()) };
+});
+frameEl.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const r = view.getBoundingClientRect(), MIN = 0.05;
+  const dx = (e.clientX - drag.x) / r.width, dy = (e.clientY - drag.y) / r.height;
+  let [x0, y0, x1, y1] = drag.start;
+  const clip = (v, a, b) => Math.min(b, Math.max(a, v));
+  if (drag.h === "move") {
+    const w = x1 - x0, h = y1 - y0;
+    x0 = clip(x0 + dx, 0, 1 - w); y0 = clip(y0 + dy, 0, 1 - h);
+    x1 = x0 + w; y1 = y0 + h;
+  } else {
+    if (drag.h.includes("l")) x0 = clip(x0 + dx, 0, x1 - MIN);
+    if (drag.h.includes("r")) x1 = clip(x1 + dx, x0 + MIN, 1);
+    if (drag.h.includes("t")) y0 = clip(y0 + dy, 0, y1 - MIN);
+    if (drag.h.includes("b")) y1 = clip(y1 + dy, y0 + MIN, 1);
+    const q = aspectQ(app.aspect);
+    if (q) { // corner: the opposite corner stays, proportions kept
+      const ax = drag.h.includes("l") ? drag.start[2] : drag.start[0], ay = drag.h.includes("t") ? drag.start[3] : drag.start[1];
+      let nw = Math.max(x1 - x0, (y1 - y0) * q);
+      nw = Math.min(nw, drag.h.includes("l") ? ax : 1 - ax, (drag.h.includes("t") ? ay : 1 - ay) * q);
+      const nh = nw / q;
+      [x0, x1] = drag.h.includes("l") ? [ax - nw, ax] : [ax, ax + nw];
+      [y0, y1] = drag.h.includes("t") ? [ay - nh, ay] : [ay, ay + nh];
+    }
+  }
+  Object.assign(frameValues(), { x0, y0, x1, y1 });
+  updateFrame();
+});
+const endDrag = () => {
+  if (!drag) return;
+  drag = null;
+  pushHistory();
+};
+frameEl.addEventListener("pointerup", endDrag);
+frameEl.addEventListener("pointercancel", endDrag);
+window.addEventListener("resize", updateFrame);
 
 // "До": hold to see the original
 let beforeHeld = false;
@@ -353,7 +484,9 @@ before.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   beforeHeld = true;
   before.classList.add("on");
-  vctx.putImageData(app.preview, 0, 0);
+  const b = app.before || app.preview;
+  if (view.width !== b.width) vctx.drawImage(canvasOf(b), 0, 0, view.width, view.height);
+  else vctx.putImageData(b, 0, 0);
 });
 const release = () => {
   if (!beforeHeld) return;
@@ -409,6 +542,8 @@ async function openFile(file) {
     app.name = (file.name || "photo").replace(/\.[^.]+$/, "");
     engine.setImage("preview", app.preview, pw / w, app.imageId);
     engine.setImage("fast", imageData(img, fw, fh), fw / w, app.imageId);
+    app.fastWidth = fw;
+    Object.assign(app.pipeline.step("crop").values, { rot90: 0, flip: 0, angle: 0, x0: 0, y0: 0, x1: 1, y1: 1 });
     $("welcome").hidden = true;
     view.hidden = false;
     $("panel").hidden = false;
@@ -475,7 +610,15 @@ async function save() {
   $("busy").hidden = false;
   toast("Обрабатываю в полном размере…", 0);
   try {
-    engine.setImage("full", app.original, 1, app.imageId);
+    // iPhone Safari limits a tab's memory: a 12 MP photo processed in float would close the
+    // tab, so phones save at up to EXPORT_PHONE px on the long side (computers: full size).
+    let src = app.original;
+    const phone = /iPhone|iPad|iPod|Android/.test(navigator.userAgent);
+    if (phone && Math.max(src.width, src.height) > EXPORT_PHONE) {
+      const [w, h] = scaled(src, EXPORT_PHONE);
+      src = imageData(canvasOf(src), w, h);
+    }
+    engine.setImage("full", src, src.width / app.original.width, app.imageId);
     const { image } = await engine.render("full", app.pipeline.toJSON());
     engine.drop("full");
     const c = document.createElement("canvas");

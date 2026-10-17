@@ -218,3 +218,18 @@ input[type=range]::-moz-range-thumb {
 }
 
 .tool.accent { border-color: var(--accent); font-weight: 700; }
+
+#frame-box { position: relative; max-width: 100%; max-height: 100%; display: grid; place-items: center; min-height: 0; }
+#frame-box canvas { max-height: calc(100vh - 290px); }
+#frame {
+  position: absolute; border: 1.5px solid #fff; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  touch-action: none; cursor: move;
+  background-image: linear-gradient(to right, transparent 33%, rgba(255,255,255,0.35) 33%, rgba(255,255,255,0.35) calc(33% + 1px), transparent calc(33% + 1px), transparent 66%, rgba(255,255,255,0.35) 66%, rgba(255,255,255,0.35) calc(66% + 1px), transparent calc(66% + 1px)),
+                    linear-gradient(to bottom, transparent 33%, rgba(255,255,255,0.35) 33%, rgba(255,255,255,0.35) calc(33% + 1px), transparent calc(33% + 1px), transparent 66%, rgba(255,255,255,0.35) 66%, rgba(255,255,255,0.35) calc(66% + 1px), transparent calc(66% + 1px));
+}
+#frame .h { position: absolute; width: 26px; height: 26px; border: 0 solid #fff; }
+#frame .lt { left: -4px; top: -4px; border-left-width: 4px; border-top-width: 4px; }
+#frame .rt { right: -4px; top: -4px; border-right-width: 4px; border-top-width: 4px; }
+#frame .lb { left: -4px; bottom: -4px; border-left-width: 4px; border-bottom-width: 4px; }
+#frame .rb { right: -4px; bottom: -4px; border-right-width: 4px; border-bottom-width: 4px; }
+main { overflow: hidden; }

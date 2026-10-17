@@ -47,9 +47,12 @@ export class Engine {
     this.worker.postMessage({ type: "drop", key });
   }
 
-  async render(key, state) {
-    const m = await this._call({ type: "render", key, state });
-    return { image: new ImageData(new Uint8ClampedArray(m.data), m.w, m.h), ms: m.ms };
+  async render(key, state, before = false) {
+    const m = await this._call({ type: "render", key, state, before });
+    return {
+      image: new ImageData(new Uint8ClampedArray(m.data), m.w, m.h), ms: m.ms,
+      before: m.before ? new ImageData(new Uint8ClampedArray(m.before), m.bw, m.bh) : null,
+    };
   }
 
   async auto(key) {
@@ -74,8 +77,8 @@ export class Engine {
   async _run(job) {
     this.busy = true;
     try {
-      const { image, ms } = await this.render(job.key, job.state);
-      if (!this.pending && this.onPreview) this.onPreview(image, ms);
+      const { image, ms, before } = await this.render(job.key, job.state, true);
+      if (!this.pending && this.onPreview) this.onPreview(image, ms, before, job.key);
     } catch (err) {
       console.error(err);
     }
