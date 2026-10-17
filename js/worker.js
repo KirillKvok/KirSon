@@ -6,6 +6,7 @@ import "./ops/index.js";
 import { Context, Pipeline } from "./core/pipeline.js";
 import { PICTURES } from "./ops/background.js";
 import { getMask } from "./face/masks.js";
+import { suggest } from "./core/auto.js";
 
 const images = new Map(); // key -> {img, ctx}
 let analysis = null; // the photo's face / person analysis (normalised), shared by all sizes
@@ -58,6 +59,9 @@ self.onmessage = (e) => {
         rgba[4 * i + 3] = 255;
       }
       self.postMessage({ type: "result", id: m.id, w: p.w, h: p.h, data: rgba.buffer, ms: 0 }, [rgba.buffer]);
+    } else if (m.type === "auto") { // «Авто»: suggested values for this photo
+      const { img, ctx } = images.get(m.key);
+      self.postMessage({ type: "auto", id: m.id, values: suggest(img, ctx) });
     } else if (m.type === "drop") {
       images.delete(m.key);
     } else if (m.type === "render") {

@@ -52,6 +52,10 @@ export class Engine {
     return { image: new ImageData(new Uint8ClampedArray(m.data), m.w, m.h), ms: m.ms };
   }
 
+  async auto(key) {
+    return (await this._call({ type: "auto", key })).values;
+  }
+
   async mask(key, name) {
     const m = await this._call({ type: "mask", key, name });
     return new ImageData(new Uint8ClampedArray(m.data), m.w, m.h);

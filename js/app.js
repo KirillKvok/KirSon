@@ -7,6 +7,7 @@ import { FILTER_NAMES } from "./ops/filters.js";
 import { LIP_COLORS, BLUSH_COLORS } from "./ops/makeup.js";
 import { HAIR_NAMES } from "./ops/hair.js";
 import { REPLACE } from "./ops/background.js";
+import { LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
 import { Engine } from "./engine.js";
 import { analyze } from "./face/analysis.js";
 
@@ -16,6 +17,16 @@ const MAX_PIXELS = 16_000_000; // iOS canvas limit is 16.7 MP
 
 // Tabs: what each one offers. {op, param} = a slider tool; {op, param, option} = a choice chip.
 const TABS = [
+  {
+    name: "Образы",
+    tools: [
+      { kind: "auto", label: "✦ Авто" },
+      ...Object.keys(LOOKS).map((name) => ({ kind: "look", name, label: name })),
+      { kind: "strength", label: "Сила образа" },
+      ...Object.keys(BUILTIN).map((name) => ({ kind: "preset", name, label: name })),
+      { kind: "reset", label: "Без обработки" },
+    ],
+  },
   {
     name: "Лицо",
     tools: [["skin", "smooth"], ["skin", "blemish"], ["face_light", "matte"], ["skin_tone", "even"],
@@ -88,6 +99,8 @@ const app = {
   future: [],
   tab: 0,
   tool: null,       // current slider tool {op, param, label}
+  look: null,       // chosen look and its strength (0..150 %)
+  lookStrength: 100,
   original: null,   // full-size ImageData
   preview: null,    // preview ImageData (the "before" view)
   result: null,     // last rendered preview
@@ -159,9 +172,70 @@ function renderTabs() {
 
 function selectTab(k) {
   app.tab = k;
-  app.tool = TABS[k].tools.find((t) => t.option === undefined) || null;
+  app.tool = TABS[k].tools.find((t) => (t.option === undefined && !t.kind) || t.kind === "strength") || null;
   renderTabs();
   renderTools();
+}
+
+// Values applied as the whole edit (look, preset, «Авто»): the frame of this photo and the
+// chosen faces are kept.
+const KEEP = ["crop", "face_select"];
+function applyValues(vals) {
+  const next = Pipeline.fromOrder(ORDER);
+  for (const st of next.steps) {
+    if (KEEP.includes(st.op)) st.values = { ...app.pipeline.step(st.op)?.values };
+    else if (vals[st.op]) st.values = { ...vals[st.op] };
+  }
+  app.pipeline = next;
+}
+
+function applyLook(push = true) {
+  if (!app.look) return;
+  applyValues(scaleLook(LOOKS[app.look], app.lookStrength / 100));
+  if (push) pushHistory();
+  requestRender();
+}
+
+async function runAuto() {
+  if (!app.preview) return;
+  if (!app.analysis) return toast("Подождите — фото ещё анализируется");
+  $("busy").hidden = false;
+  try {
+    applyValues(await engine.auto("preview"));
+    app.look = null;
+    pushHistory();
+    renderTools();
+    requestRender();
+    toast("Подобрано под это фото — можно подправить на вкладках");
+  } catch (err) {
+    console.error(err);
+  }
+  $("busy").hidden = true;
+}
+
+function kindTool(t, b) {
+  const on = (t.kind === "look" && app.look === t.name) || (t.kind === "strength" && app.tool === t);
+  b.className = "tool" + (on ? " on" : "") + (t.kind === "auto" ? " accent" : "");
+  b.innerHTML = `<span class="dot"></span>${t.label}`;
+  b.onclick = () => {
+    if (t.kind === "auto") return runAuto();
+    if (t.kind === "look") {
+      app.look = t.name;
+      app.tool = TABS[app.tab].tools.find((x) => x.kind === "strength");
+      applyLook();
+    } else if (t.kind === "preset") {
+      app.look = null;
+      applyValues(BUILTIN[t.name]);
+      pushHistory();
+      requestRender();
+    } else if (t.kind === "reset") {
+      app.look = null;
+      applyValues({});
+      pushHistory();
+      requestRender();
+    } else if (t.kind === "strength") app.tool = t;
+    renderTools();
+  };
 }
 
 function renderTools() {
@@ -169,6 +243,11 @@ function renderTools() {
   row.innerHTML = "";
   for (const t of TABS[app.tab].tools) {
     const b = document.createElement("button");
+    row.appendChild(b);
+    if (t.kind) {
+      kindTool(t, b);
+      continue;
+    }
     const p = paramOf(t), v = values(t.op)[t.param];
     const isChoice = t.option !== undefined;
     const on = isChoice ? v === t.option : app.tool === t;
@@ -184,7 +263,6 @@ function renderTools() {
       } else app.tool = t;
       renderTools();
     };
-    row.appendChild(b);
   }
   renderSlider();
 }
@@ -193,6 +271,14 @@ function renderSlider() {
   const t = app.tool, s = $("slider");
   $("slider-row").style.visibility = t ? "visible" : "hidden";
   if (!t) return;
+  if (t.kind === "strength") {
+    s.min = 0;
+    s.max = 150;
+    s.value = app.lookStrength;
+    $("tool-label").textContent = app.look ? `${app.look}` : "Сила образа";
+    $("tool-value").textContent = `${app.lookStrength}`;
+    return;
+  }
   const p = paramOf(t);
   s.min = p.min;
   s.max = p.max;
@@ -205,6 +291,13 @@ $("slider").addEventListener("input", (e) => {
   const t = app.tool;
   if (!t) return;
   const v = Number(e.target.value);
+  if (t.kind === "strength") {
+    app.lookStrength = v;
+    $("tool-value").textContent = v;
+    app.dragging = true;
+    if (app.look) applyLook(false);
+    return;
+  }
   setValue(t.op, t.param, v);
   $("tool-value").textContent = v;
   app.dragging = true;
@@ -219,6 +312,12 @@ $("slider").addEventListener("change", () => {
 $("tool-value").addEventListener("click", () => {
   const t = app.tool;
   if (!t) return;
+  if (t.kind === "strength") {
+    app.lookStrength = 100;
+    applyLook();
+    renderSlider();
+    return;
+  }
   setValue(t.op, t.param, paramOf(t).def);
   pushHistory();
   renderTools();

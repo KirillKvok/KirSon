@@ -216,3 +216,5 @@ input[type=range]::-moz-range-thumb {
   .icon { width: 36px; height: 38px; }
   .bar .primary { padding: 9px 11px; font-size: 14px; }
 }
+
+.tool.accent { border-color: var(--accent); font-weight: 700; }

@@ -12,7 +12,7 @@ const odd = (x, lo = 3, hi = 255) => Math.min(hi, Math.max(lo, Math.round(x) | 1
 const clip = (v, a = 0, b = 1) => (v < a ? a : v > b ? b : v);
 
 // Small spots darker or redder than the skin around them (median at ~3.5% of face width).
-function blemishMask(low, skin, fw) {
+export function blemishMask(low, skin, fw) {
   const { w, h } = low, n = w * h, r = odd(fw * 0.035) >> 1;
   const lab = I.rgbToLab(low);
   const L = I.fimg(w, h, 1), a4 = I.fimg(w, h, 1);
