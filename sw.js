@@ -1,8 +1,9 @@
 // Offline: the app shell, libraries and models are cached on the first visit; later visits
 // work without the internet. Bump VERSION when files change, so phones get the update.
-const VERSION = "kirson-4be2bf950abb";
+const VERSION = "kirson-69f785a96af4";
 const CORE = [
   "./",
+  "js/version.js",
   "css/app.css",
   "fonts/CormorantGaramond-Variable.ttf",
   "fonts/Manrope-Variable.ttf",
@@ -41,23 +42,40 @@ const CORE = [
   "manifest.webmanifest",
 ];
 
+// Heavy files that rarely change (models, MediaPipe, fonts) live in their own cache and survive
+// updates; the app shell is per version.
+const ASSETS = "kirson-assets-1";
+const isAsset = (url) => /\/(models|vendor|fonts)\//.test(new URL(url).pathname);
+
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(CORE)).then(() => self.skipWaiting()));
+  // cache: "reload" — fresh from the server, never a stale copy from the browser's HTTP cache
+  e.waitUntil(caches.open(VERSION)
+    .then((c) => Promise.all(CORE.map((u) => fetch(u, { cache: "reload" }).then((r) => r.ok && c.put(u, r)))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {
-  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+  e.waitUntil(caches.keys()
+    .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== ASSETS).map((k) => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 
-// cache first; anything fetched later (models, MediaPipe wasm) is cached as it arrives
 self.addEventListener("fetch", (e) => {
-  if (e.request.method !== "GET" || new URL(e.request.url).origin !== location.origin) return;
-  e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
+  const req = e.request;
+  if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
+  if (isAsset(req.url)) { // cache first: ~60 MB downloaded once
+    e.respondWith(caches.open(ASSETS).then((c) => c.match(req).then((hit) => hit || fetch(req).then((res) => {
+      if (res.ok) c.put(req, res.clone());
+      return res;
+    }))));
+    return;
+  }
+  // the app itself: network first (always the newest version online), cache when offline
+  e.respondWith(fetch(req, { cache: "no-cache" }).then((res) => {
     if (res.ok) {
       const copy = res.clone();
-      caches.open(VERSION).then((c) => c.put(e.request, copy));
+      caches.open(VERSION).then((c) => c.put(req, copy));
     }
     return res;
-  })));
+  }).catch(() => caches.match(req, { ignoreSearch: true })));
 });

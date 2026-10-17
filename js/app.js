@@ -11,6 +11,7 @@ import { LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
 import { ASPECTS, rectOf } from "./ops/crop.js";
 import { Engine } from "./engine.js";
 import { analyze } from "./face/analysis.js";
+import { VERSION } from "./version.js";
 
 const PREVIEW = 1280; // preview long side (as on the desktop)
 const FAST = 640;     // while a slider is held
@@ -825,8 +826,17 @@ renderTabs();
 selectTab(0);
 updateButtons();
 // (not on the development server: a cached copy would hide fresh edits)
+$("version").textContent = `версия ${VERSION}`;
 if ("serviceWorker" in navigator && !["localhost", "127.0.0.1"].includes(location.hostname)) {
-  navigator.serviceWorker.register("sw.js").catch((e) => console.warn("service worker", e));
+  // updateViaCache "none": the browser checks sw.js itself on every start (no stale copy)
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).catch((e) => console.warn("service worker", e));
+  // a new version took over: reload right away if no photo is being edited yet
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!app.original && !sessionStorage.getItem("kirson-reloaded")) {
+      sessionStorage.setItem("kirson-reloaded", "1");
+      location.reload();
+    }
+  });
 }
 window.kirson = { app, engine, openFile }; // for scripted checks
 if (["localhost", "127.0.0.1"].includes(location.hostname)) import("./dev.js").then((m) => (window.kirson.dev = m));
