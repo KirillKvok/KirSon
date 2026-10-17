@@ -1,6 +1,7 @@
 // Basic corrections — port of kirson/core/ops/basic.py (tone, light, colour, sharpness).
 import { register, P } from "../core/pipeline.js";
 import * as I from "../core/img.js";
+import { getMask } from "../face/masks.js";
 
 // Vibrance weight by hue (0..255 full circle). Skin is at 6..17 (median 12) from red:
 // those hues get only 15% of the boost, so faces do not turn orange.
@@ -122,7 +123,12 @@ register("sharpen", "Чёткость", [P("sharpness", "Резкость", 0, 1
     if (p.sharpness) {
       const sigma = Math.max(0.7, long / 1600);
       const blur = I.gaussian(lum, sigma);
-      const skin = ctx.skinMask ? ctx.skinMask(img) : null; // set once face masks exist
+      // skin gets only a little sharpening: it would undo smoothing and bring back noise
+      let skin = null;
+      if (ctx.cache.has("analysis")) {
+        const fs = getMask(img, ctx, "face_skin"), bs = getMask(img, ctx, "body_skin");
+        skin = I.mapPlane(fs, (v, i) => Math.max(v, bs.data[i]));
+      }
       for (let i = 0; i < out.data.length; i++) {
         const det = lum.data[i] - blur.data[i];
         let gate = Math.min(1, Math.max(0, (Math.abs(det) - 0.01) / 0.02));

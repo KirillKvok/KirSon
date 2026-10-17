@@ -6,6 +6,7 @@ import "./ops/index.js";
 import { Context, Pipeline } from "./core/pipeline.js";
 
 const images = new Map(); // key -> {img, ctx}
+let analysis = null; // the photo's face / person analysis (normalised), shared by all sizes
 
 function rgbaToRgb(rgba, w, h) {
   const out = new Uint8ClampedArray(w * h * 3);
@@ -35,7 +36,16 @@ self.onmessage = (e) => {
       const img = { w: m.w, h: m.h, data: rgbaToRgb(new Uint8ClampedArray(m.data), m.w, m.h) };
       const ctx = new Context(m.scale);
       ctx.cache.set("_imageId", m.imageId);
+      if (analysis && analysis.imageId === m.imageId) ctx.cache.set("analysis", analysis);
       images.set(m.key, { img, ctx });
+    } else if (m.type === "analysis") {
+      analysis = m.analysis;
+      for (const { ctx } of images.values()) {
+        if (ctx.cache.get("_imageId") !== analysis.imageId) continue;
+        // masks and step outputs computed without the analysis are no longer valid
+        for (const k of [...ctx.cache.keys()]) if (k !== "_imageId") ctx.cache.delete(k);
+        ctx.cache.set("analysis", analysis);
+      }
     } else if (m.type === "drop") {
       images.delete(m.key);
     } else if (m.type === "render") {

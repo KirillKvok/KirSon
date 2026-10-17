@@ -5,6 +5,7 @@ import { ORDER } from "./ops/index.js";
 import { REGISTRY, Pipeline, defaults } from "./core/pipeline.js";
 import { FILTER_NAMES } from "./ops/filters.js";
 import { Engine } from "./engine.js";
+import { analyze } from "./face/analysis.js";
 
 const PREVIEW = 1280; // preview long side (as on the desktop)
 const FAST = 640;     // while a slider is held
@@ -12,6 +13,12 @@ const MAX_PIXELS = 16_000_000; // iOS canvas limit is 16.7 MP
 
 // Tabs: what each one offers. {op, param} = a slider tool; {op, param, option} = a choice chip.
 const TABS = [
+  {
+    name: "Лицо",
+    tools: [["skin", "smooth"], ["skin", "blemish"], ["skin", "texture"], ["skin_natural", "texture"],
+      ["skin_natural", "volume"], ["teeth_eyes", "teeth"], ["teeth_eyes", "sclera"], ["teeth_eyes", "iris"],
+      ["skin", "body"]].map(([op, param]) => ({ op, param })),
+  },
   {
     name: "Коррекция",
     tools: [["light", "shadows"], ["light", "highlights"], ["brightness", "amount"], ["contrast", "amount"],
@@ -271,11 +278,32 @@ async function openFile(file) {
     if (!app.history.length) pushHistory();
     updateButtons();
     requestRender();
+    runAnalysis(app.imageId);
   } catch (err) {
     console.error(err);
     toast("Не удалось открыть фото");
     $("busy").hidden = true;
   }
+}
+
+// Face / person analysis of the full photo (once per photo, MediaPipe on the main thread).
+async function runAnalysis(imageId) {
+  $("busy").hidden = false;
+  try {
+    const t = performance.now();
+    const a = await analyze(app.original);
+    if (imageId !== app.imageId) return; // another photo was opened meanwhile
+    a.imageId = imageId;
+    app.analysis = a;
+    engine.setAnalysis(a);
+    console.debug(`analysis ${Math.round(performance.now() - t)} ms, faces ${a.faces.length}`);
+    if (!a.faces.length) toast("Лицо не найдено — ретушь лица недоступна");
+    requestRender();
+  } catch (err) {
+    console.error(err);
+    toast("Не удалось проанализировать фото");
+  }
+  $("busy").hidden = true;
 }
 
 $("file").addEventListener("change", (e) => openFile(e.target.files[0]));

@@ -34,6 +34,10 @@ export class Engine {
       [buf]);
   }
 
+  setAnalysis(analysis) {
+    this.worker.postMessage({ type: "analysis", analysis });
+  }
+
   drop(key) {
     this.worker.postMessage({ type: "drop", key });
   }

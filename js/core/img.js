@@ -431,3 +431,29 @@ export function seededNormal(n, seed = 20261017) {
   }
   return out;
 }
+
+// Float crop of a uint8 RGB image (only the box is converted)
+export function cropFloat(img, b) {
+  const w = b.x1 - b.x0, h = b.y1 - b.y0, out = new Float32Array(w * h * 3);
+  for (let y = 0; y < h; y++) {
+    let s = ((b.y0 + y) * img.w + b.x0) * 3, o = y * w * 3;
+    for (let x = 0; x < w * 3; x++) out[o++] = img.data[s++] * (1 / 255);
+  }
+  return fimg(w, h, 3, out);
+}
+
+// Copy of a uint8 RGB image with a float RGB part written into the box
+export function withPart(img, part, b) {
+  const out = new Uint8ClampedArray(img.data);
+  const w = b.x1 - b.x0;
+  for (let y = 0; y < b.y1 - b.y0; y++) {
+    let o = ((b.y0 + y) * img.w + b.x0) * 3, s = y * w * 3;
+    for (let x = 0; x < w * 3; x++) out[o++] = part.data[s++] * 255 + 0.5;
+  }
+  return { w: img.w, h: img.h, data: out };
+}
+
+export function percentile(values, q) {
+  const a = Float32Array.from(values).sort();
+  return a.length ? a[Math.min(a.length - 1, Math.max(0, Math.round(q * (a.length - 1))))] : 0;
+}
