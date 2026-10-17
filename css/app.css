@@ -233,3 +233,11 @@ input[type=range]::-moz-range-thumb {
 #frame .lb { left: -4px; bottom: -4px; border-left-width: 4px; border-bottom-width: 4px; }
 #frame .rb { right: -4px; bottom: -4px; border-right-width: 4px; border-bottom-width: 4px; }
 main { overflow: hidden; }
+
+/* zoom: the photo box is scaled / moved with a transform; gestures handled in app.js */
+main#stage { touch-action: none; }
+#frame-box { transform-origin: 0 0; will-change: transform; }
+#frame-box canvas { max-height: none; max-width: none; }
+.chip-btn.fit { left: 18px; right: auto; }
+.chip-btn { background: rgba(255, 255, 255, 0.86); color: #34343A; }
+@media (prefers-color-scheme: dark) { .chip-btn { background: rgba(30, 21, 18, 0.82); color: #ECE5DE; } }

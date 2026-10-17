@@ -14,6 +14,8 @@ import { analyze } from "./face/analysis.js";
 
 const PREVIEW = 1280; // preview long side (as on the desktop)
 const FAST = 640;     // while a slider is held
+const DETAIL = 2048;  // preview long side when zoomed in (fine detail)
+const MAX_ZOOM = 6;
 const MAX_PIXELS = 16_000_000; // iOS canvas limit is 16.7 MP
 const EXPORT_PHONE = 3200; // long side of the saved photo on phones (memory)
 
@@ -195,6 +197,7 @@ function canvasOf(imageData) {
 function selectTab(k) {
   const wasFrame = frameTab();
   app.tab = k;
+  if (frameTab()) resetZoom(); // the frame editor works on the whole, unzoomed photo
   if (wasFrame !== frameTab()) requestRender(); // the frame editor shows the whole photo
   app.tool = TABS[k].tools.find((t) => (t.option === undefined && !t.kind) || t.kind === "strength") || null;
   renderTabs();
@@ -373,13 +376,15 @@ function previewState() {
 
 function requestRender() {
   if (!app.preview) return;
-  engine.preview(app.dragging ? "fast" : "preview", previewState());
+  const key = app.dragging ? "fast" : zoom.s > 1.5 && app.detailWidth ? "detail" : "preview";
+  engine.preview(key, previewState());
 }
 
 engine.onPreview = (image, ms, before, key) => {
   app.result = image;
   app.before = before;
-  app.fastScale = key === "fast" ? app.preview.width / app.fastWidth : 1;
+  // a quick low-res render is drawn over the current canvas size (no jumps in size)
+  app.fastScale = key === "fast" ? (zoom.s > 1.5 && app.detailWidth ? app.detailWidth : app.preview.width) / app.fastWidth : 1;
   if (!beforeHeld) show(image);
   $("busy").hidden = true;
   updateFrame();
@@ -391,10 +396,131 @@ function show(image) {
   if (view.width !== w || view.height !== h) {
     view.width = w;
     view.height = h;
+    fitCanvas();
   }
   if (image.width === view.width) vctx.putImageData(image, 0, 0);
   else createImageBitmap(image).then((bmp) => vctx.drawImage(bmp, 0, 0, view.width, view.height));
 }
+
+// --- zoom: pinch, pan, double tap, wheel ------------------------------------------------------
+// The photo box gets translate + scale; the canvas has a fixed on-screen "fit" size, so the
+// higher-resolution render used when zoomed in replaces it without any jump.
+const stage = $("stage"), box = $("frame-box"), fitBtn = $("btn-fit");
+const zoom = { s: 1, tx: 0, ty: 0 };
+
+function fitCanvas() {
+  if (view.hidden || !view.width) return;
+  const r = stage.getBoundingClientRect(), pad = 20;
+  const k = Math.min((r.width - pad) / view.width, (r.height - pad) / view.height);
+  view.style.width = `${Math.floor(view.width * k)}px`;
+  view.style.height = `${Math.floor(view.height * k)}px`;
+  clampZoom();
+  applyZoom();
+}
+
+function clampZoom() {
+  zoom.s = Math.min(MAX_ZOOM, Math.max(1, zoom.s));
+  const w = box.offsetWidth, h = box.offsetHeight;
+  zoom.tx = Math.min(0, Math.max(w * (1 - zoom.s), zoom.tx));
+  zoom.ty = Math.min(0, Math.max(h * (1 - zoom.s), zoom.ty));
+  if (zoom.s === 1) zoom.tx = zoom.ty = 0;
+}
+
+let detailWanted = false;
+function applyZoom() {
+  box.style.transform = zoom.s === 1 ? "" : `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.s})`;
+  fitBtn.hidden = zoom.s <= 1.01;
+  const want = zoom.s > 1.5;
+  if (want !== detailWanted) { // sharper render once the zoom crosses 1.5x
+    detailWanted = want;
+    clearTimeout(applyZoom.t);
+    applyZoom.t = setTimeout(requestRender, 250);
+  }
+}
+
+// zoom by factor f keeping the screen point (cx, cy) in place
+function zoomAt(cx, cy, s) {
+  const o = box.getBoundingClientRect(); // includes the current transform
+  const lx = (cx - o.left) / zoom.s, ly = (cy - o.top) / zoom.s; // point in unscaled box coordinates
+  const ns = Math.min(MAX_ZOOM, Math.max(1, s));
+  zoom.tx += (zoom.s - ns) * lx;
+  zoom.ty += (zoom.s - ns) * ly;
+  zoom.s = ns;
+  clampZoom();
+  applyZoom();
+}
+
+function resetZoom() {
+  Object.assign(zoom, { s: 1, tx: 0, ty: 0 });
+  applyZoom();
+}
+fitBtn.onclick = resetZoom;
+
+const pointers = new Map();
+let gesture = null, lastTap = { t: 0, x: 0, y: 0 };
+stage.addEventListener("pointerdown", (e) => {
+  if (view.hidden || frameTab() || e.target.closest("button") || e.target.closest("#frame")) return;
+  stage.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const ps = [...pointers.values()];
+  if (ps.length === 2) {
+    gesture = { kind: "pinch", d0: Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y), s0: zoom.s,
+      mx: (ps[0].x + ps[1].x) / 2, my: (ps[0].y + ps[1].y) / 2, tx: zoom.tx, ty: zoom.ty };
+  } else if (ps.length === 1) {
+    gesture = { kind: "pan", x: e.clientX, y: e.clientY, tx: zoom.tx, ty: zoom.ty, moved: false };
+  }
+});
+stage.addEventListener("pointermove", (e) => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const ps = [...pointers.values()];
+  if (gesture?.kind === "pinch" && ps.length >= 2) {
+    const d = Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y);
+    const mx = (ps[0].x + ps[1].x) / 2, my = (ps[0].y + ps[1].y) / 2;
+    // restore the start, then zoom around the start midpoint and follow the fingers' movement
+    Object.assign(zoom, { s: gesture.s0, tx: gesture.tx, ty: gesture.ty });
+    zoomAt(gesture.mx, gesture.my, gesture.s0 * (d / Math.max(gesture.d0, 1)));
+    zoom.tx += mx - gesture.mx;
+    zoom.ty += my - gesture.my;
+    clampZoom();
+    applyZoom();
+  } else if (gesture?.kind === "pan") {
+    const dx = e.clientX - gesture.x, dy = e.clientY - gesture.y;
+    if (Math.hypot(dx, dy) > 6) gesture.moved = true;
+    if (zoom.s > 1) {
+      zoom.tx = gesture.tx + dx;
+      zoom.ty = gesture.ty + dy;
+      clampZoom();
+      applyZoom();
+    }
+  }
+});
+const pointerEnd = (e) => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.delete(e.pointerId);
+  if (gesture?.kind === "pan" && !gesture.moved && e.type === "pointerup") {
+    const now = performance.now(); // double tap: zoom in at the point / back to the whole photo
+    if (now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
+      if (zoom.s > 1.01) resetZoom();
+      else zoomAt(e.clientX, e.clientY, 2.5);
+      lastTap.t = 0;
+    } else lastTap = { t: now, x: e.clientX, y: e.clientY };
+  }
+  if (pointers.size === 1 && gesture?.kind === "pinch") { // one finger stays: continue as a pan
+    const [p] = [...pointers.values()];
+    gesture = { kind: "pan", x: p.x, y: p.y, tx: zoom.tx, ty: zoom.ty, moved: true };
+  } else if (!pointers.size) gesture = null;
+};
+stage.addEventListener("pointerup", pointerEnd);
+stage.addEventListener("pointercancel", pointerEnd);
+stage.addEventListener("wheel", (e) => {
+  if (view.hidden || frameTab()) return;
+  e.preventDefault();
+  zoomAt(e.clientX, e.clientY, zoom.s * (e.deltaY < 0 ? 1.2 : 1 / 1.2));
+}, { passive: false });
+// iPhone Safari: no page zoom on pinch (the photo zooms instead)
+document.addEventListener("gesturestart", (e) => e.preventDefault());
+window.addEventListener("resize", fitCanvas);
 
 // --- crop frame editor -------------------------------------------------------------------------
 const frameEl = $("frame");
@@ -543,6 +669,12 @@ async function openFile(file) {
     engine.setImage("preview", app.preview, pw / w, app.imageId);
     engine.setImage("fast", imageData(img, fw, fh), fw / w, app.imageId);
     app.fastWidth = fw;
+    app.detailWidth = 0;
+    if (Math.max(w, h) > PREVIEW * 1.2) { // sharper preview for zoomed-in work
+      const [dw, dh] = scaled({ width: w, height: h }, DETAIL);
+      engine.setImage("detail", imageData(img, dw, dh), dw / w, app.imageId);
+      app.detailWidth = dw;
+    }
     Object.assign(app.pipeline.step("crop").values, { rot90: 0, flip: 0, angle: 0, x0: 0, y0: 0, x1: 1, y1: 1 });
     $("welcome").hidden = true;
     view.hidden = false;
@@ -551,6 +683,8 @@ async function openFile(file) {
     view.width = pw;
     view.height = ph;
     vctx.putImageData(app.preview, 0, 0);
+    resetZoom();
+    fitCanvas();
     app.result = null;
     if (!app.history.length) pushHistory();
     updateButtons();
