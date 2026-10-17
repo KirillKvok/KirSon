@@ -15,9 +15,11 @@ const MAX_PIXELS = 16_000_000; // iOS canvas limit is 16.7 MP
 const TABS = [
   {
     name: "Лицо",
-    tools: [["skin", "smooth"], ["skin", "blemish"], ["skin", "texture"], ["skin_natural", "texture"],
-      ["skin_natural", "volume"], ["teeth_eyes", "teeth"], ["teeth_eyes", "sclera"], ["teeth_eyes", "iris"],
-      ["skin", "body"]].map(([op, param]) => ({ op, param })),
+    tools: [["skin", "smooth"], ["skin", "blemish"], ["face_light", "matte"], ["skin_tone", "even"],
+      ["skin_tone", "redness"], ["face_detail", "circles"], ["face_detail", "bags"], ["face_detail", "folds"],
+      ["face_detail", "wrinkles"], ["face_light", "soften"], ["face_light", "fill"], ["skin_tone", "tan"],
+      ["teeth_eyes", "teeth"], ["teeth_eyes", "sclera"], ["teeth_eyes", "iris"], ["skin", "texture"],
+      ["skin_natural", "texture"], ["skin_natural", "volume"], ["skin", "body"]].map(([op, param]) => ({ op, param })),
   },
   {
     name: "Коррекция",
@@ -389,3 +391,4 @@ if ("serviceWorker" in navigator && !["localhost", "127.0.0.1"].includes(locatio
   navigator.serviceWorker.register("sw.js").catch((e) => console.warn("service worker", e));
 }
 window.kirson = { app, engine, openFile }; // for scripted checks
+if (["localhost", "127.0.0.1"].includes(location.hostname)) import("./dev.js").then((m) => (window.kirson.dev = m));
