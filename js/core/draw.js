@@ -153,3 +153,38 @@ export function components(p, thr = 0.5) {
   }
   return { labels, stats };
 }
+
+// Exact Euclidean distance (px) from every pixel to the nearest pixel where `isZero` is true
+// (Felzenszwalb & Huttenlocher, separable, O(n)) — what cv2.distanceTransform gives.
+export function distance(p, isZero) {
+  const { w, h } = p, INF = 1e20, f = new Float64Array(Math.max(w, h)), d = new Float64Array(Math.max(w, h));
+  const v = new Int32Array(Math.max(w, h)), z = new Float64Array(Math.max(w, h) + 1);
+  const g = new Float64Array(w * h);
+  for (let i = 0; i < w * h; i++) g[i] = isZero(p.data[i]) ? 0 : INF;
+  const edt1d = (n) => {
+    let k = 0;
+    v[0] = 0; z[0] = -INF; z[1] = INF;
+    for (let q = 1; q < n; q++) {
+      let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+      while (s <= z[k]) { k--; s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]); }
+      k++; v[k] = q; z[k] = s; z[k + 1] = INF;
+    }
+    k = 0;
+    for (let q = 0; q < n; q++) {
+      while (z[k + 1] < q) k++;
+      d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+    }
+  };
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) f[y] = g[y * w + x];
+    edt1d(h);
+    for (let y = 0; y < h; y++) g[y * w + x] = d[y];
+  }
+  const out = fimg(w, h, 1);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) f[x] = g[y * w + x];
+    edt1d(w);
+    for (let x = 0; x < w; x++) out.data[y * w + x] = Math.sqrt(d[x]);
+  }
+  return out;
+}

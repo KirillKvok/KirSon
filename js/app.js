@@ -28,6 +28,11 @@ const TABS = [
       ["face_shape", "symmetry"]].map(([op, param]) => ({ op, param })),
   },
   {
+    name: "Фигура",
+    tools: [["body", "waist"], ["body", "hips"], ["body", "legs"], ["body", "length"], ["body", "arms"],
+      ["body", "shoulders"], ["body", "neck"]].map(([op, param]) => ({ op, param })),
+  },
+  {
     name: "Коррекция",
     tools: [["light", "shadows"], ["light", "highlights"], ["brightness", "amount"], ["contrast", "amount"],
       ["color", "saturation"], ["color", "vibrance"], ["color", "temperature"], ["color", "tint"],
