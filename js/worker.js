@@ -14,7 +14,9 @@ import * as par from "./core/par.js";
 par.start(); // helper threads for the blurs (when the page is cross-origin isolated)
 
 const images = new Map(); // key -> {img, ctx}
-let analysis = null; // the photo's face / person analysis (normalised), shared by all sizes
+// face / person analyses (normalised) by photo: shared by all sizes of a photo; the open photo and a
+// batch photo can be here at once
+const analyses = new Map();
 
 function rgbaToRgb(rgba, w, h) {
   const out = new Uint8ClampedArray(w * h * 3);
@@ -44,10 +46,12 @@ self.onmessage = (e) => {
       const img = { w: m.w, h: m.h, data: rgbaToRgb(new Uint8ClampedArray(m.data), m.w, m.h) };
       const ctx = new Context(m.scale, new Map(), { noCache: m.key === "full" });
       ctx.cache.set("_imageId", m.imageId);
-      if (analysis && analysis.imageId === m.imageId) ctx.cache.set("analysis", analysis);
+      if (analyses.has(m.imageId)) ctx.cache.set("analysis", analyses.get(m.imageId));
       images.set(m.key, { img, ctx });
     } else if (m.type === "analysis") {
-      analysis = m.analysis;
+      const analysis = m.analysis;
+      analyses.set(analysis.imageId, analysis);
+      while (analyses.size > 3) analyses.delete(analyses.keys().next().value);
       for (const { ctx } of images.values()) {
         if (ctx.cache.get("_imageId") !== analysis.imageId) continue;
         // masks and step outputs computed without the analysis are no longer valid
@@ -71,6 +75,8 @@ self.onmessage = (e) => {
       OBJECT_MASKS.set(objectKey(m.x, m.y), { w: m.w, h: m.h, c: 1, data: new Float32Array(m.data) });
     } else if (m.type === "objectFill") { // the removed object's patch
       OBJECT_FILLS.set(objectKey(m.x, m.y), m.fill);
+    } else if (m.type === "forgetAnalysis") { // a batch photo is done
+      analyses.delete(m.imageId);
     } else if (m.type === "drop") {
       images.delete(m.key);
     } else if (m.type === "render") {

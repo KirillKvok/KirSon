@@ -360,6 +360,88 @@ function openVersion(v) {
   drawOverlay();
 }
 
+// --- «Пакет фото»: the current edit applied to many photos (core/batch.py on the desktop) ----------
+// Each photo gets its own analysis (faces, parsing) and the same sliders — without what belongs to one
+// photo (frame, brushes, object, chosen faces). Phones work at the light size (memory), computers at full.
+function batchState() {
+  const vals = portableValues(), p = Pipeline.fromOrder(ORDER);
+  for (const st of p.steps) if (vals[st.op]) st.values = { ...vals[st.op] };
+  return p.toJSON();
+}
+
+function startBatch() {
+  if (!Object.keys(portableValues()).length)
+    return toast("Сначала настройте одно фото как нравится — пакет применит те же правки к остальным", 4000);
+  $("batch-files").value = "";
+  $("batch-files").click();
+}
+
+let batchRunning = false;
+$("batch-files").addEventListener("change", async (e) => {
+  const files = [...e.target.files];
+  if (!files.length || batchRunning) return;
+  batchRunning = true;
+  const state = batchState(), out = [], phone = /iPhone|iPad|iPod|Android/.test(navigator.userAgent);
+  const limit = phone ? EXPORT_PHONE : Math.floor(Math.sqrt(MAX_PIXELS));
+  $("busy").hidden = false;
+  let failed = 0;
+  for (let i = 0; i < files.length; i++) {
+    toast(`Пакет: фото ${i + 1} из ${files.length}…`, 0);
+    const id = 1e6 + Date.now() % 1e6 + i; // never the open photo's id
+    try {
+      const img = await decode(files[i]), [w, h] = scaled(img, limit), full = imageData(img, w, h);
+      img.close?.();
+      const a = await analyze(full);
+      a.imageId = id;
+      if (a.faces.length) await parseFaces(full, a.faces).catch(() => {});
+      engine.setAnalysis(a);
+      engine.setImage("batch", full, 1, id);
+      const { image } = await engine.render("batch", state);
+      engine.drop("batch");
+      engine.forgetAnalysis(id);
+      const c = document.createElement("canvas");
+      c.width = image.width;
+      c.height = image.height;
+      c.getContext("2d").putImageData(image, 0, 0);
+      const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.95));
+      const name = (files[i].name || `photo_${i + 1}`).replace(/\.[^.]+$/, "");
+      out.push(new File([blob], `${name}_kirson.jpg`, { type: "image/jpeg" }));
+    } catch (err) {
+      console.error(err);
+      failed++;
+      engine.drop("batch");
+      engine.forgetAnalysis(id);
+    }
+  }
+  $("busy").hidden = true;
+  batchRunning = false;
+  if (!out.length) return toast("Не удалось обработать фото");
+  batchFiles = out;
+  toast(`Готово: ${out.length} фото${failed ? `, не получилось: ${failed}` : ""}`, 0, [["Сохранить все", saveBatch]]);
+});
+
+let batchFiles = [];
+async function saveBatch() {
+  if (navigator.canShare && navigator.canShare({ files: batchFiles })) {
+    try {
+      await navigator.share({ files: batchFiles }); // iPhone: «Сохранить N изображений»
+      hideToast();
+      return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
+    }
+  }
+  for (const f of batchFiles) { // computers: ordinary downloads
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(f);
+    a.download = f.name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  hideToast();
+}
+
 // «Сравнить версии»: «Сейчас» and the newest versions side by side (quick 640 px renders)
 function compareVersions() {
   if (!app.preview) return;
@@ -395,6 +477,7 @@ function mineTools() {
   for (const p of myPresets()) tools.push({ kind: "myPreset", preset: p, label: p.name });
   tools.push({ kind: "versionSave", label: "＋ Запомнить версию" });
   if (app.versions.length) tools.push({ kind: "compare", label: "Сравнить версии" });
+  tools.push({ kind: "batch", label: "Пакет фото" });
   for (const v of [...app.versions].reverse()) tools.push({ kind: "version", version: v, label: v.name });
   return tools;
 }
@@ -458,6 +541,7 @@ function kindTool(t, b) {
     }
     if (t.kind === "version") return openVersion(t.version);
     if (t.kind === "compare") return compareVersions();
+    if (t.kind === "batch") return startBatch();
     if (t.kind === "look") {
       app.look = t.name;
       app.tool = TABS[app.tab].tools.find((x) => x.kind === "strength");
@@ -1838,5 +1922,5 @@ if ("serviceWorker" in navigator && !["localhost", "127.0.0.1"].includes(locatio
     }
   });
 }
-window.kirson = { app, engine, openFile, saved: () => savedFile }; // for scripted checks
+window.kirson = { app, engine, openFile, saved: () => savedFile, batch: () => batchFiles }; // for scripted checks
 if (["localhost", "127.0.0.1"].includes(location.hostname)) import("./dev.js").then((m) => (window.kirson.dev = m));

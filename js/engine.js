@@ -52,6 +52,10 @@ export class Engine {
     this.worker.postMessage({ type: "analysis", analysis });
   }
 
+  forgetAnalysis(imageId) {
+    this.worker.postMessage({ type: "forgetAnalysis", imageId });
+  }
+
   drop(key) {
     this.worker.postMessage({ type: "drop", key });
   }
