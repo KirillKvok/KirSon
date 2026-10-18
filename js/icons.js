@@ -80,6 +80,7 @@ const P = {
   eyeshadow: '<path d="M3 14c3-3.5 6-5 9-5s6 1.5 9 5"/><path d="M5 10.5c2.2-3 4.6-4.5 7-4.5s4.8 1.5 7 4.5" opacity=".5"/><path d="M3 14c3 2.5 6 3.5 9 3.5s6-1 9-3.5" opacity=".5"/>',
   lashes: '<path d="M3 14c3-3.5 6-5 9-5s6 1.5 9 5"/><path d="M6 11.5L4.5 8.5M9 10l-1-3.5M12 9.3V5.5M15 10l1-3.5M18 11.5l1.5-3"/>',
   freckles: '<path d="M12 3c-4 0-6.5 3.2-6.5 7.6 0 5 3 10.4 6.5 10.4s6.5-5.4 6.5-10.4C18.5 6.2 16 3 12 3z" opacity=".5"/><circle cx="9" cy="12" r=".9" fill="currentColor"/><circle cx="10.5" cy="13.8" r=".7" fill="currentColor"/><circle cx="14.5" cy="12.3" r=".9" fill="currentColor"/><circle cx="13.3" cy="14.2" r=".7" fill="currentColor"/><circle cx="12" cy="11.5" r=".6" fill="currentColor"/>',
+  thirds: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.2 4.5v15M14.8 4.5v15M3.5 9.5h17M3.5 14.5h17" opacity=".5"/><circle cx="14.8" cy="9.5" r="1.6" fill="currentColor"/>',
   grid: '<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.5"/>',
   undo: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4.5v4h4"/>',
 };
@@ -113,7 +114,7 @@ const BY_KIND = {
   auto: "sparkle", strength: "slider", reset: "reset", facePick: "person", faceAll: "group",
   objectPick: "cursor", objectRemove: "eraser", objectClear: "close", brushSize: "size", brushStrength: "gauge",
   brushClear: "trash", aspect: "rect", rotate: "rotate", flip: "flip", frameReset: "reset",
-  presetSave: "plus", versionSave: "bookmark", compare: "grid", batch: "layers", enhance: "sparkle", bodyAuto: "sparkle", videoEdit: "film", myPreset: "layers", preset: "layers",
+  presetSave: "plus", versionSave: "bookmark", compare: "grid", batch: "layers", enhance: "sparkle", bodyAuto: "sparkle", smartFrame: "thirds", videoEdit: "film", myPreset: "layers", preset: "layers",
 };
 const BRUSH = { liquify: ["push", "shrink", "expand"], heal: ["bandage"], mask_edit: ["shield", "brush", "person", "mountain"] };
 

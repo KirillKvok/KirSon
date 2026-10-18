@@ -12,7 +12,7 @@ import { LIGHT_DIRS } from "./ops/relight.js";
 import { labToRgb } from "./core/img.js";
 import { LOOKS as BASE_LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
 import { MORE_LOOKS, MORE_PRESETS } from "./core/styles.js";
-import { ASPECTS, rectOf } from "./ops/crop.js";
+import { ASPECTS, rectOf, inscribedScale } from "./ops/crop.js";
 import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
 import { selectedFaces } from "./ops/faces.js";
 import { objectKey } from "./ops/object.js";
@@ -133,6 +133,7 @@ const TABS = [
   {
     name: "Кадр",
     tools: [
+      { kind: "smartFrame", label: "Умный кадр" },
       ...Object.keys(ASPECTS).map((name) => ({ kind: "aspect", name, label: name })),
       { op: "crop", param: "angle", label: "Наклон" },
       { kind: "rotate", label: "⟳ 90°" },
@@ -700,6 +701,7 @@ function kindTool(t, b) {
     if (t.kind === "auto") return runAuto();
     if (t.kind === "enhance") return enhancePhoto();
     if (t.kind === "bodyAuto") return bodyAuto();
+    if (t.kind === "smartFrame") return smartFrame();
     if (t.kind === "presetSave") return savePreset();
     if (t.kind === "myPreset") return applyPreset(t.preset);
     if (t.kind === "versionSave") {
@@ -875,6 +877,7 @@ const TIPS = {
   "makeup.iris": "Новый цвет глаз — рисунок радужки и блик сохраняются.",
   "freckles.amount": "Влево — убрать веснушки, вправо — добавить естественные на нос и щёки.",
   bodyAuto: "Мягко подправит только те части фигуры, что видны в кадре.",
+  smartFrame: "Кадрирует по правилам портрета: глаза на верхней трети, место по направлению взгляда.",
   "btn-video": "Ретушь видео до 15 секунд: кожа, тон и цвет в каждом кадре, звук сохраняется.",
   "btn-camera": "Камера подскажет, как встать к свету и держать телефон, — и снимет лучший кадр.",
 };
@@ -1645,6 +1648,58 @@ function aspectQ(name) {
   const ratio = ASPECTS[name];
   if (ratio === null || !app.result) return null;
   return ratio === 0 ? 1 : (ratio * view.height) / view.width;
+}
+
+// «Умный кадр»: the largest frame of the chosen proportions (4:5 when free) with the eyes on the upper
+// third, the face centred — or on the far third when the head is turned (room ahead of the look) —
+// and room above the head. Rotation / mirroring of the frame are taken into account.
+function smartFrame() {
+  const faces = app.analysis?.faces;
+  if (!app.analysis) return toast("Подождите — фото ещё анализируется");
+  if (!faces?.length) return toast("Лицо не найдено — кадр можно задать вручную", 2500);
+  const fv = frameValues(), rot = (fv.rot90 || 0) % 4, flip = !!fv.flip;
+  const W = app.original.width, H = app.original.height, [FW, FH] = rot % 2 ? [H, W] : [W, H];
+  // a point of the photo (normalised) -> the rotated / mirrored frame (normalised)
+  const map = ([x, y]) => {
+    let p = rot === 1 ? [1 - y, x] : rot === 2 ? [1 - x, 1 - y] : rot === 3 ? [y, 1 - x] : [x, y];
+    if (flip) p = [1 - p[0], p[1]];
+    const s = inscribedScale(FW, FH, fv.angle || 0); // straightening crops around the centre
+    return [0.5 + (p[0] - 0.5) / s, 0.5 + (p[1] - 0.5) / s];
+  };
+  const box = (f) => {
+    const P = (i) => map([f.pts[2 * i], f.pts[2 * i + 1]]);
+    let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+    for (let i = 0; i < f.pts.length / 2; i++) { const [x, y] = P(i); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    const l = P(234), r = P(454), nose = P(1), mid = (l[0] + r[0]) / 2, half = Math.abs(r[0] - l[0]) / 2 || 1;
+    return { x0, y0, x1, y1, eyes: (P(468)[1] + P(473)[1]) / 2, turn: (nose[0] - mid) / half }; // turn < 0: to the frame's left
+  };
+  const ratio = ASPECTS[app.aspect] || 4 / 5, q = (ratio * FH) / FW; // normalised width / height
+  let [cw, ch] = q <= 1 ? [q, 1] : [1, 1 / q];
+  // the faces to frame: all if they fit, else the chosen ones («Лицо» → «Выбрать лицо»), else the biggest
+  let boxes = faces.map(box);
+  const fits = (bs) => Math.max(...bs.map((b) => b.x1)) - Math.min(...bs.map((b) => b.x0)) <= cw * 0.9;
+  if (!fits(boxes)) {
+    const sel = selectedFaces(app.pipeline.step("face_select").values).filter((i) => i < boxes.length);
+    boxes = sel.length && fits(sel.map((i) => boxes[i])) ? sel.map((i) => boxes[i])
+      : [boxes.reduce((a, b) => ((b.x1 - b.x0) > (a.x1 - a.x0) ? b : a))];
+  }
+  const x0 = Math.min(...boxes.map((b) => b.x0)), x1 = Math.max(...boxes.map((b) => b.x1));
+  const y0 = Math.min(...boxes.map((b) => b.y0)), y1 = Math.max(...boxes.map((b) => b.y1));
+  const eyesY = boxes.reduce((a, b) => a + b.eyes, 0) / boxes.length, turn = boxes.reduce((a, b) => a + b.turn, 0) / boxes.length;
+  const cx = (x0 + x1) / 2, fh = y1 - y0;
+  // horizontal: centred, or on the third away from where the face looks
+  const target = Math.abs(turn) > 0.22 ? (turn < 0 ? 2 / 3 : 1 / 3) : 0.5;
+  let left = cx - target * cw;
+  // vertical: the eyes on the upper third, but the top of the head (+ a little air) inside
+  let top = eyesY - ch / 3;
+  top = Math.min(top, y0 - 0.35 * fh);
+  const clip = (v, a, b) => Math.min(b, Math.max(a, v));
+  left = clip(left, 0, 1 - cw);
+  top = clip(top, 0, 1 - ch);
+  if (ASPECTS[app.aspect] === null) app.aspect = "4:5";
+  editFrame({ x0: left, y0: top, x1: left + cw, y1: top + ch });
+  renderTools();
+  toast(`Кадр ${app.aspect}: глаза на верхней трети${target === 0.5 ? "" : ", место по направлению взгляда"}`, 2500);
 }
 
 function setAspect(name) {
