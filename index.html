@@ -47,9 +47,14 @@
     <div id="frame-box">
       <canvas id="view" hidden></canvas>
       <canvas id="overlay" hidden></canvas>
+      <canvas id="before-view" hidden></canvas>
+      <div id="split-line" hidden><span class="split-handle"></span><b class="split-tag l">до</b><b class="split-tag r">после</b></div>
       <div id="frame" hidden><i class="h lt"></i><i class="h rt"></i><i class="h lb"></i><i class="h rb"></i></div>
     </div>
     <button id="btn-before" class="chip-btn glass" hidden>До</button>
+    <button id="btn-split" class="chip-btn split glass" hidden aria-label="Шторка до/после">
+      <svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M12 3.5v17"/></svg>
+    </button>
     <button id="btn-fit" class="chip-btn fit glass" hidden>Вписать</button>
     <div id="ring" class="ring" hidden></div>
     <div id="busy" class="busy" hidden><span></span></div>

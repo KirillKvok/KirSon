@@ -143,6 +143,8 @@ const app = {
   tool: null,       // current slider tool {op, param, label}
   aspect: "Свободно", // crop frame proportions
   brush: { tool: "liquify", mode: 0, size: 25, strength: 50 },
+  split: false,     // before / after divider on the photo
+  splitPos: 0.5,
   before: null,     // the original in the result's frame (when cropped)
   look: null,       // chosen look and its strength (0..150 %)
   lookStrength: 100,
@@ -230,6 +232,7 @@ function selectTab(k) {
   app.objectPick = false;
   app.tab = k;
   if (frameTab()) resetZoom(); // the frame editor works on the whole, unzoomed photo
+  updateSplit(true);
   if (wasFrame !== frameTab() || wasBrush !== (brushTab() || objectTab())) requestRender(); // whole photo in these tabs
   drawOverlay();
   app.tool = TABS[k].tools.find((t) => (t.option === undefined && !t.kind) || t.kind === "strength" || t.kind === "brushSize") || null;
@@ -473,7 +476,7 @@ function previewState() {
 function requestRender() {
   if (!app.preview) return;
   const key = app.dragging ? "fast" : zoom.s > 1.5 && app.detailWidth ? "detail" : "preview";
-  engine.preview(key, previewState());
+  engine.preview(key, previewState(), app.split ? "always" : true);
 }
 
 engine.onPreview = (image, ms, before, key) => {
@@ -482,6 +485,7 @@ engine.onPreview = (image, ms, before, key) => {
   // a quick low-res render is drawn over the current canvas size (no jumps in size)
   app.fastScale = key === "fast" ? (zoom.s > 1.5 && app.detailWidth ? app.detailWidth : app.preview.width) / app.fastWidth : 1;
   if (!beforeHeld) show(image);
+  updateSplit(true);
   $("busy").hidden = true;
   updateFrame();
   drawOverlay();
@@ -512,6 +516,7 @@ function fitCanvas() {
   const k = Math.min((r.width - pad) / view.width, (r.height - pad) / view.height);
   view.style.width = `${Math.floor(view.width * k)}px`;
   view.style.height = `${Math.floor(view.height * k)}px`;
+  updateSplit(true);
   clampZoom();
   applyZoom();
 }
@@ -527,6 +532,7 @@ function clampZoom() {
 let detailWanted = false;
 function applyZoom() {
   box.style.transform = zoom.s === 1 ? "" : `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.s})`;
+  box.style.setProperty("--zinv", String(1 / zoom.s));
   applied.tx = zoom.s === 1 ? 0 : zoom.tx;
   applied.ty = zoom.s === 1 ? 0 : zoom.ty;
   fitBtn.hidden = zoom.s <= 1.01;
@@ -563,7 +569,7 @@ fitBtn.onclick = resetZoom;
 const pointers = new Map();
 let gesture = null, lastTap = { t: 0, x: 0, y: 0 };
 stage.addEventListener("pointerdown", (e) => {
-  if (view.hidden || frameTab() || e.target.closest("button") || e.target.closest("#frame")) return;
+  if (view.hidden || frameTab() || e.target.closest("button") || e.target.closest("#frame") || e.target.closest("#split-line")) return;
   stage.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   const ps = [...pointers.values()];
@@ -646,6 +652,52 @@ stage.addEventListener("wheel", (e) => {
 // iPhone Safari: no page zoom on pinch (the photo zooms instead)
 document.addEventListener("gesturestart", (e) => e.preventDefault());
 window.addEventListener("resize", fitCanvas);
+
+// --- before / after split ----------------------------------------------------------------------
+const beforeView = $("before-view"), splitLine = $("split-line"), splitBtn = $("btn-split");
+const splitAllowed = () => !frameTab() && !brushTab() && !view.hidden;
+
+// redraw: the original (in the result's frame) over the result, clipped right of the divider
+function updateSplit(redraw = false) {
+  const on = app.split && splitAllowed() && !!app.preview;
+  beforeView.hidden = splitLine.hidden = !on;
+  splitBtn.classList.toggle("on", app.split);
+  if (!on) return;
+  if (redraw || beforeView.width !== view.width) {
+    beforeView.width = view.width;
+    beforeView.height = view.height;
+    const src = app.before || app.preview;
+    beforeView.getContext("2d").drawImage(canvasOf(src), 0, 0, view.width, view.height);
+  }
+  Object.assign(beforeView.style, { width: view.style.width, height: view.style.height,
+    left: `${view.offsetLeft}px`, top: `${view.offsetTop}px`,
+    clipPath: `inset(0 ${(1 - app.splitPos) * 100}% 0 0)` });
+  Object.assign(splitLine.style, { left: `${view.offsetLeft + app.splitPos * view.offsetWidth}px`,
+    top: `${view.offsetTop}px`, height: `${view.offsetHeight}px` });
+}
+
+splitBtn.onclick = () => {
+  app.split = !app.split;
+  if (app.split && !splitAllowed()) toast("Шторка работает на остальных вкладках", 2000);
+  updateSplit(true);
+  if (app.split) requestRender(); // the original at the current render size (sharp when zoomed)
+};
+let splitDrag = false;
+splitLine.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  splitLine.setPointerCapture(e.pointerId);
+  splitDrag = true;
+});
+splitLine.addEventListener("pointermove", (e) => {
+  if (!splitDrag) return;
+  const r = view.getBoundingClientRect(); // includes the zoom
+  app.splitPos = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  updateSplit();
+});
+const splitEnd = () => (splitDrag = false);
+splitLine.addEventListener("pointerup", splitEnd);
+splitLine.addEventListener("pointercancel", splitEnd);
 
 // --- brushes: strokes in the photo's own coordinates -------------------------------------------
 const ring = $("ring"), overlay = $("overlay");
@@ -1019,6 +1071,7 @@ async function openFile(file) {
     view.hidden = false;
     $("panel").hidden = false;
     before.hidden = false;
+    splitBtn.hidden = false;
     view.width = pw;
     view.height = ph;
     vctx.putImageData(app.preview, 0, 0);

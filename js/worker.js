@@ -77,8 +77,10 @@ self.onmessage = (e) => {
       const msg = { type: "result", id: m.id, w: out.w, h: out.h, data: rgba.buffer, ms: performance.now() - t };
       const transfer = [rgba.buffer];
       const frame = m.state.steps.find((s) => s.op === "crop");
-      if (m.before && frame && frame.enabled !== false && frameActive({ ...frame.values })) {
-        const b = geometry(entry.img, frame.values), brgba = rgbToRgba(b.data, b.w, b.h);
+      const framed = frame && frame.enabled !== false && frameActive({ ...frame.values });
+      // "always": the original at this size for the split view (sharp when zoomed in)
+      if ((m.before && framed) || m.before === "always") {
+        const b = framed ? geometry(entry.img, frame.values) : entry.img, brgba = rgbToRgba(b.data, b.w, b.h);
         Object.assign(msg, { bw: b.w, bh: b.h, before: brgba.buffer });
         transfer.push(brgba.buffer);
       }

@@ -70,8 +70,8 @@ export class Engine {
   }
 
   // Preview: only the newest request matters.
-  preview(key, state) {
-    const job = { key, state };
+  preview(key, state, before = true) {
+    const job = { key, state, before };
     if (this.busy) {
       this.pending = job;
       return;
@@ -82,7 +82,7 @@ export class Engine {
   async _run(job) {
     this.busy = true;
     try {
-      const { image, ms, before } = await this.render(job.key, job.state, true);
+      const { image, ms, before } = await this.render(job.key, job.state, job.before);
       if (!this.pending && this.onPreview) this.onPreview(image, ms, before, job.key);
     } catch (err) {
       console.error(err);
