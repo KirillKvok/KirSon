@@ -75,8 +75,8 @@ const TABS = [
   },
   {
     name: "Фигура",
-    tools: [["body", "waist"], ["body", "hips"], ["body", "legs"], ["body", "length"], ["body", "arms"],
-      ["body", "shoulders"], ["body", "neck"]].map(([op, param]) => ({ op, param })),
+    tools: [{ kind: "bodyAuto", label: "Авто" }, ...[["body", "waist"], ["body", "hips"], ["body", "legs"], ["body", "length"], ["body", "arms"],
+      ["body", "shoulders"], ["body", "neck"]].map(([op, param]) => ({ op, param }))],
   },
   {
     name: "Макияж",
@@ -381,6 +381,28 @@ function openVersion(v) {
   drawOverlay();
 }
 
+// --- «Фигура: Авто»: moderate values for the parts of the body actually in the frame ---------------------
+// (MediaPipe pose landmarks and their visibility) — a head-and-shoulders selfie gets no «waist».
+const POSE = { nose: 0, shoulders: [11, 12], elbows: [13, 14], hips: [23, 24], knees: [25, 26], ankles: [27, 28] };
+function bodyAuto() {
+  const pose = app.analysis?.poses?.[0];
+  if (!app.analysis) return toast("Подождите — фото ещё анализируется");
+  if (!pose) return toast("Фигура в кадре не найдена", 2500);
+  const seen = (idx) => [].concat(idx).every((i) => (pose.vis?.[i] ?? 0) > 0.55 && pose.pts[2 * i + 1] < 1 && pose.pts[2 * i + 1] > 0);
+  const vals = { waist: 0, hips: 0, arms: 0, legs: 0, length: 0, neck: 0 }, names = [];
+  if (seen(POSE.shoulders) && seen(POSE.hips)) { vals.waist = 30; vals.hips = 15; names.push("талия", "бёдра"); }
+  if (seen(POSE.elbows)) { vals.arms = 20; names.push("руки"); }
+  if (seen(POSE.knees)) { vals.legs = 20; names.push("ноги"); }
+  if (seen(POSE.ankles)) { vals.length = 15; names.push("длина ног"); }
+  if (seen(POSE.shoulders) && seen(POSE.nose)) { vals.neck = 10; names.push("шея"); }
+  if (!names.length) return toast("Тело почти не видно в кадре — подправлять нечего", 2500);
+  Object.assign(app.pipeline.step("body").values, vals);
+  pushHistory();
+  renderTools();
+  requestRender();
+  toast(`Подправлено: ${names.join(", ")} — каждый ползунок можно изменить`, 3000);
+}
+
 // --- «Улучшить качество»: Real-ESRGAN x4 (face/analysis.js superResolve) ------------------------------
 // The photo is scaled to a quarter of the result and the network draws the detail back 4x; mixed 70 %
 // with a plain upscale and a fine grain — at 100 % skin looked painted. Best for small or blurry
@@ -655,6 +677,7 @@ function kindTool(t, b) {
     if (b.dataset.long === "1") return;
     if (t.kind === "auto") return runAuto();
     if (t.kind === "enhance") return enhancePhoto();
+    if (t.kind === "bodyAuto") return bodyAuto();
     if (t.kind === "presetSave") return savePreset();
     if (t.kind === "myPreset") return applyPreset(t.preset);
     if (t.kind === "versionSave") {
@@ -829,6 +852,7 @@ const TIPS = {
   "makeup.highlight": "Перламутровый блеск на скулах, носу и над губой.",
   "makeup.iris": "Новый цвет глаз — рисунок радужки и блик сохраняются.",
   "freckles.amount": "Влево — убрать веснушки, вправо — добавить естественные на нос и щёки.",
+  bodyAuto: "Мягко подправит только те части фигуры, что видны в кадре.",
   "btn-video": "Ретушь видео до 15 секунд: кожа, тон и цвет в каждом кадре, звук сохраняется.",
   "btn-camera": "Камера подскажет, как встать к свету и держать телефон, — и снимет лучший кадр.",
 };
@@ -1745,6 +1769,7 @@ async function openFile(file, { restoring = false } = {}) {
     let [w, h] = [img.width, img.height];
     if (w * h > MAX_PIXELS) [w, h] = scaled({ width: w, height: h }, Math.floor(Math.sqrt(MAX_PIXELS * Math.max(w, h) / Math.min(w, h))));
     app.original = imageData(img, w, h);
+    app.analysis = null; // the previous photo's analysis must not answer for this one
     const [pw, ph] = scaled({ width: w, height: h }, PREVIEW), [fw, fh] = scaled({ width: w, height: h }, FAST);
     app.preview = imageData(img, pw, ph);
     app.imageId += 1;
