@@ -23,6 +23,7 @@ import * as session from "./session.js";
 import { FORMATS, fit, facesFocus } from "./social.js";
 import { videoSupported, record } from "./video.js";
 import { openCompare } from "./compare.js";
+import { haptic } from "./haptics.js";
 import { editVideo, videoEditSupported, audioContext } from "./videoedit.js";
 
 // the desktop's looks and presets plus the web's own styles (core/styles.js)
@@ -1722,6 +1723,19 @@ $("camera").addEventListener("change", (e) => {
   const name = `selfie_${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}_${p2(d.getHours())}-${p2(d.getMinutes())}.jpg`;
   openFile(new File([f], name, { type: f.type || "image/jpeg" }));
 });
+// a light tap in the hand for buttons and tabs (js/haptics.js); the slider ticks at its default
+document.addEventListener("click", (e) => {
+  if (e.target.closest?.(".tool, .tab, .icon, .primary, .secondary, .toast-btn, .chip-btn, .tool-reset, .compare-back")) haptic();
+}, true);
+let lastDetent = null;
+$("slider").addEventListener("input", (e) => {
+  const t = app.tool;
+  if (!t || t.kind) return;
+  const at = Number(e.target.value) === paramOf(t).def;
+  if (at && lastDetent === false) haptic();
+  lastDetent = at;
+});
+
 // --- theme: as the system, light or dark (the button in the bar cycles; kept on this device) ---------
 // The dark look lives in `@media (prefers-color-scheme: dark)` blocks: their condition is switched —
 // the original (system), "all" (always dark) or "not all" (never) — and the same for the dark logo
@@ -1902,6 +1916,7 @@ async function exportPhoto(size, social = null) {
     savedFile = new File([blob], `${app.name}_${suffix}.jpg`, { type: "image/jpeg" });
     session.save({ exporting: false });
     // Sharing needs a fresh tap on iPhone: offer the button.
+    haptic("done");
     toast(`Готово · ${c.width}×${c.height}`, 0, [["Сохранить в Фото", shareSaved]]);
   } catch (err) {
     console.error(err);
