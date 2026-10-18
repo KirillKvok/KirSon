@@ -795,6 +795,59 @@ function softHyphens(word) {
 }
 const plainLabel = (s) => s.replace(/^[✦＋↺⟳]\s*/, "").split(" ").map(softHyphens).join(" ");
 
+// --- «новое»: what a new feature does, once, on its first tap ------------------------------------------
+const TIPS = {
+  compare: "Сравните до четырёх версий рядом и вернитесь к лучшей.",
+  batch: "Настройте одно фото — пакет применит те же правки к любому количеству снимков.",
+  videoEdit: "Ретушь видео до 15 секунд с этими правками — звук сохраняется.",
+  enhance: "Нейросеть дорисует детали маленьким и размытым фото и увеличит их.",
+  presetSave: "Сохраните правки как свой пресет — он работает с любым фото.",
+  objectRemove: "Нейросеть уберёт выделенный предмет и дорисует фон.",
+  "hair.thick": "Затягивает просветы и пробор — волосы выглядят гуще.",
+  "btn-video": "Ретушь видео до 15 секунд: кожа, тон и цвет в каждом кадре, звук сохраняется.",
+  "btn-camera": "Камера подскажет, как встать к свету и держать телефон, — и снимет лучший кадр.",
+};
+const TIPS_KEY = "kirson-tips";
+let tipTimer = 0;
+function showTip(text) {
+  let el = document.getElementById("tip");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "tip";
+    el.className = "tip glass";
+    el.onclick = () => el.remove();
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(() => el.remove(), 5000);
+}
+function tipsSeen() {
+  try { return new Set(JSON.parse(localStorage.getItem(TIPS_KEY)) || []); } catch { return new Set(); }
+}
+const tipKey = (t) => (t.kind ? t.kind : `${t.op}.${t.param}`);
+function badge(b, key) {
+  if (!TIPS[key] || tipsSeen().has(key)) return;
+  b.dataset.tip = key;
+  const s = document.createElement("span");
+  s.className = "newbadge";
+  s.textContent = "новое";
+  b.appendChild(s);
+}
+// the first tap: the tip (the action itself goes on as usual)
+document.addEventListener("click", (e) => {
+  const b = e.target.closest?.("[data-tip]");
+  if (!b) return;
+  const key = b.dataset.tip, seen = tipsSeen();
+  delete b.dataset.tip;
+  b.querySelector(".newbadge")?.remove();
+  if (seen.has(key)) return;
+  seen.add(key);
+  try { localStorage.setItem(TIPS_KEY, JSON.stringify([...seen])); } catch { /* private mode */ }
+  showTip(TIPS[key]); // its own bubble: the action's messages (questions with buttons) stay visible
+}, true);
+for (const id of ["btn-video", "btn-camera"]) badge($(id), id);
+
 function decorate(b, t, label) {
   if (b.classList.contains("thumb") || b.classList.contains("version")) return;
   const on = b.classList.contains("on");
@@ -822,6 +875,7 @@ function decorate(b, t, label) {
   if (t.op === "background" && t.param === "replace" && !color) ico.innerHTML = iconFor(t.option ? { op: "skin_natural", param: "volume" } : { kind: "reset" });
   b.replaceChildren(ico, lbl, dot);
   b.classList.toggle("on", on);
+  badge(b, tipKey(t));
 }
 
 function renderTools() {

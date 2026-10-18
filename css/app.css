@@ -619,3 +619,25 @@ input[type=range]::-moz-range-thumb {
   background: linear-gradient(90deg, var(--lens-1), var(--lens-2));
 }
 .prep.done span { color: var(--accent); font-weight: 650; }
+
+/* «новое»: a small badge on a feature not tried yet (its first tap shows what it does) */
+.newbadge {
+  position: absolute; top: 4px; left: 50%; transform: translateX(-50%); z-index: 1;
+  padding: 1px 6px; border-radius: 7px; font-size: 9px; font-weight: 800; letter-spacing: 0.02em; text-transform: lowercase;
+  color: #fff; background: linear-gradient(170deg, #E08A6B, #B8573B); box-shadow: 0 2px 5px rgba(184, 87, 59, 0.4);
+  pointer-events: none;
+}
+.tool.tile .newbadge { top: 3px; }
+.secondary.big, .icon { position: relative; }
+.tip {
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 250px); transform: translateX(-50%); z-index: 30;
+  width: min(340px, 88vw); padding: 12px 14px; border-radius: 16px; font-size: 13.5px; line-height: 1.4; font-weight: 600;
+  color: var(--text); cursor: pointer; animation: tipIn 0.25s ease-out;
+}
+.tip.glass { background: linear-gradient(170deg, rgba(255, 255, 255, 0.97), rgba(246, 242, 237, 0.94)); border: 1px solid #fff;
+  box-shadow: 0 12px 28px rgba(59, 36, 28, 0.25), inset 0 1px 0 #fff; }
+@media (prefers-color-scheme: dark) { .tip.glass { background: linear-gradient(170deg, rgba(66, 48, 41, 0.97), rgba(38, 27, 23, 0.96)); border-color: rgba(255, 255, 255, 0.16); } }
+.tip::before { content: "Новое · "; color: #C0603F; font-weight: 800; }
+@keyframes tipIn { from { opacity: 0; transform: translate(-50%, 8px); } }
+@media (prefers-reduced-motion: reduce) { .tip { animation: none; } }
+.secondary.big .newbadge { top: -7px; left: auto; right: 14px; transform: none; font-size: 10px; padding: 2px 8px; }
