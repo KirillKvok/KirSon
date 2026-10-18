@@ -214,8 +214,8 @@ input[type=range]::-moz-range-thumb {
 [hidden] { display: none !important; }
 @media (max-width: 420px) {
   .bar { padding: 5px 5px 5px 10px; }
-  .word { font-size: 20px; }
-  .mono { width: 24px; height: 24px; }
+  .word { display: none; } /* six buttons in the bar: the monogram alone */
+  .mono { width: 28px; height: 28px; }
   .actions { gap: 0; }
   .icon { width: 36px; height: 38px; }
   .bar .primary { padding: 9px 11px; font-size: 14px; }

@@ -1722,6 +1722,51 @@ $("camera").addEventListener("change", (e) => {
   const name = `selfie_${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}_${p2(d.getHours())}-${p2(d.getMinutes())}.jpg`;
   openFile(new File([f], name, { type: f.type || "image/jpeg" }));
 });
+// --- theme: as the system, light or dark (the button in the bar cycles; kept on this device) ---------
+// The dark look lives in `@media (prefers-color-scheme: dark)` blocks: their condition is switched —
+// the original (system), "all" (always dark) or "not all" (never) — and the same for the dark logo
+// and the status bar colour. No second copy of the dark styles to keep in step.
+const THEME_KEY = "kirson-theme", THEMES = ["auto", "light", "dark"];
+const THEME_NAMES = { auto: "как в системе", light: "светлая", dark: "тёмная" };
+const darkQuery = /prefers-color-scheme:\s*dark/, lightQuery = /prefers-color-scheme:\s*light/;
+const original = new WeakMap();
+function setMedia(obj, get, set, mode) {
+  if (!original.has(obj)) original.set(obj, get());
+  const orig = original.get(obj);
+  const dark = darkQuery.test(orig), light = lightQuery.test(orig);
+  if (!dark && !light) return;
+  if (mode === "auto") set(orig);
+  else set((mode === "dark") === dark ? "all" : "not all");
+}
+function applyTheme(mode) {
+  const walk = (rules) => {
+    for (const r of rules) {
+      if (r.media && r.cssRules) {
+        setMedia(r, () => r.media.mediaText, (v) => { r.media.mediaText = v; }, mode);
+        walk(r.cssRules);
+      }
+    }
+  };
+  for (const sheet of document.styleSheets) {
+    try { walk(sheet.cssRules); } catch { /* another origin */ }
+  }
+  for (const el of document.querySelectorAll("source[media], meta[name=theme-color][media]"))
+    setMedia(el, () => el.getAttribute("media"), (v) => el.setAttribute("media", v), mode);
+  document.documentElement.style.colorScheme = mode === "auto" ? "" : mode;
+  $("btn-theme").title = `Тема: ${THEME_NAMES[mode]}`;
+}
+let theme = "auto";
+try { theme = THEMES.includes(localStorage.getItem(THEME_KEY)) ? localStorage.getItem(THEME_KEY) : "auto"; } catch { /* private mode */ }
+applyTheme(theme);
+// a stylesheet still loading has no rules yet: once it is there, switch it too
+for (const l of document.querySelectorAll('link[rel=stylesheet]')) l.addEventListener("load", () => applyTheme(theme));
+$("btn-theme").onclick = () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+  try { localStorage.setItem(THEME_KEY, theme); } catch { /* private mode */ }
+  applyTheme(theme);
+  toast(`Тема: ${THEME_NAMES[theme]}`, 1500);
+};
+
 // --- any platform: install as an app, keyboard on computers -------------------------------------------
 // Chrome / Edge (Android, Windows, Mac, Linux) offer installing through this event: a button for it.
 // Safari has no such event: a line on how to do it (iPhone — the welcome tour explains it too).
