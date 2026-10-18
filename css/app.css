@@ -251,3 +251,36 @@ main#stage { touch-action: none; }
   border: 2px solid rgba(255, 255, 255, 0.95); box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.45), inset 0 0 0 1.5px rgba(0, 0, 0, 0.35);
   transform: translate(-50%, -50%);
 }
+
+/* in-app guide */
+.tour { position: fixed; inset: 0; z-index: 50; }
+.tour-spot {
+  position: fixed; border-radius: 14px; pointer-events: none;
+  box-shadow: 0 0 0 9999px rgba(10, 6, 4, 0.66), 0 0 0 2px rgba(255, 255, 255, 0.9);
+  transition: left 0.25s, top 0.25s, width 0.25s, height 0.25s;
+}
+.tour-card {
+  position: fixed; border-radius: 18px; padding: 16px 16px 12px; background: var(--bg); color: var(--text);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35); transition: top 0.25s, left 0.25s;
+}
+.tour-card h3 { margin: 0 0 6px; font-size: 17px; color: var(--accent); }
+.tour-card p { margin: 0 0 12px; font-size: 14.5px; line-height: 1.45; color: var(--text); }
+.tour-row { display: flex; align-items: center; gap: 8px; }
+.tour-count { font-size: 12px; color: var(--muted); margin-right: auto; }
+.tour-skip { border: 0; background: transparent; color: var(--muted); padding: 8px 10px; cursor: pointer; font-weight: 600; }
+.tour-next { padding: 9px 16px; }
+@media (prefers-reduced-motion: reduce) { .tour-spot, .tour-card { transition: none; } .g i { animation: none !important; } }
+
+/* gesture pictograms: fingertips as soft dots */
+.tour-gesture:empty { display: none; }
+.g { position: relative; height: 54px; margin: 2px 0 10px; border-radius: 12px; background: var(--chip); overflow: hidden; }
+.g i { position: absolute; width: 22px; height: 22px; border-radius: 50%; top: 16px; background: var(--accent); opacity: 0.85; }
+.g-pinch i:first-child { left: calc(50% - 30px); animation: pinchL 1.6s ease-in-out infinite; }
+.g-pinch i:last-child { left: calc(50% + 8px); animation: pinchR 1.6s ease-in-out infinite; }
+@keyframes pinchL { 0%, 20% { transform: translateX(10px); } 70%, 100% { transform: translateX(-40px); } }
+@keyframes pinchR { 0%, 20% { transform: translateX(-10px); } 70%, 100% { transform: translateX(40px); } }
+.g-tap2 i, .g-hold i { left: calc(50% - 11px); }
+.g-hold i { animation: hold 1.8s ease-in-out infinite; }
+@keyframes hold { 0%, 15% { transform: scale(1); } 30%, 80% { transform: scale(1.5); opacity: 0.55; } 100% { transform: scale(1); } }
+.g-paint i { left: 20%; animation: paint 2s ease-in-out infinite; }
+@keyframes paint { 0% { transform: translate(0, 6px); } 50% { transform: translate(140px, -6px); } 100% { transform: translate(0, 6px); } }

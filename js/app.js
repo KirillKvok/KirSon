@@ -15,6 +15,7 @@ import { objectKey } from "./ops/object.js";
 import { Engine } from "./engine.js";
 import { analyze, objectMask } from "./face/analysis.js";
 import { VERSION } from "./version.js";
+import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
 
 const PREVIEW = 1280; // preview long side (as on the desktop)
 const FAST = 640;     // while a slider is held
@@ -1028,6 +1029,7 @@ async function openFile(file) {
     updateButtons();
     requestRender();
     runAnalysis(app.imageId);
+    if (!seen("editor")) setTimeout(showEditorTour, 900); // the first photo: how the editor works
   } catch (err) {
     console.error(err);
     toast("Не удалось открыть фото");
@@ -1157,6 +1159,14 @@ selectTab(0);
 updateButtons();
 // (not on the development server: a cached copy would hide fresh edits)
 $("version").textContent = `версия ${VERSION}`;
+
+function showEditorTour() {
+  selectTab(0); // «Образы»: the «Авто» button is on screen
+  resetZoom();
+  runTour("editor", editorSteps());
+}
+$("btn-help").onclick = () => (app.preview ? showEditorTour() : runTour("welcome", welcomeSteps()));
+if (!seen("welcome")) setTimeout(() => { if (!app.preview) runTour("welcome", welcomeSteps()); }, 600);
 if ("serviceWorker" in navigator && !["localhost", "127.0.0.1"].includes(location.hostname)) {
   // updateViaCache "none": the browser checks sw.js itself on every start (no stale copy)
   navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).catch((e) => console.warn("service worker", e));
