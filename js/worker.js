@@ -8,6 +8,7 @@ import { PICTURES } from "./ops/background.js";
 import { getMask } from "./face/masks.js";
 import { suggest } from "./core/auto.js";
 import { geometry, frameActive } from "./ops/crop.js";
+import { OBJECT_MASKS, objectKey } from "./ops/object.js";
 
 const images = new Map(); // key -> {img, ctx}
 let analysis = null; // the photo's face / person analysis (normalised), shared by all sizes
@@ -63,6 +64,8 @@ self.onmessage = (e) => {
     } else if (m.type === "auto") { // «Авто»: suggested values for this photo
       const { img, ctx } = images.get(m.key);
       self.postMessage({ type: "auto", id: m.id, values: suggest(img, ctx) });
+    } else if (m.type === "objectMask") { // magic-touch mask of a tapped object
+      OBJECT_MASKS.set(objectKey(m.x, m.y), { w: m.w, h: m.h, c: 1, data: new Float32Array(m.data) });
     } else if (m.type === "drop") {
       images.delete(m.key);
     } else if (m.type === "render") {

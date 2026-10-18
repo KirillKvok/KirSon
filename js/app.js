@@ -11,8 +11,9 @@ import { LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
 import { ASPECTS, rectOf } from "./ops/crop.js";
 import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
 import { selectedFaces } from "./ops/faces.js";
+import { objectKey } from "./ops/object.js";
 import { Engine } from "./engine.js";
-import { analyze } from "./face/analysis.js";
+import { analyze, objectMask } from "./face/analysis.js";
 import { VERSION } from "./version.js";
 
 const PREVIEW = 1280; // preview long side (as on the desktop)
@@ -81,6 +82,14 @@ const TABS = [
       { op: "background", param: "blur" }, { op: "background", param: "brightness" }, { op: "background", param: "saturation" },
       ...REPLACE.map((n, k) => ({ op: "background", param: "replace", option: k, label: k ? n : "Свой фон",
         action: n === "Своя картинка" ? "pickBackground" : null })),
+    ],
+  },
+  {
+    name: "Объект",
+    tools: [
+      { kind: "objectPick", label: "Выбрать объект" },
+      ...["brightness", "contrast", "saturation", "sharpness"].map((param) => ({ op: "object", param })),
+      { kind: "objectClear", label: "Снять выделение" },
     ],
   },
   {
@@ -215,11 +224,12 @@ function canvasOf(imageData) {
 }
 
 function selectTab(k) {
-  const wasFrame = frameTab(), wasBrush = brushTab();
+  const wasFrame = frameTab(), wasBrush = brushTab() || objectTab();
   app.facePick = false;
+  app.objectPick = false;
   app.tab = k;
   if (frameTab()) resetZoom(); // the frame editor works on the whole, unzoomed photo
-  if (wasFrame !== frameTab() || wasBrush !== brushTab()) requestRender(); // whole photo in these tabs
+  if (wasFrame !== frameTab() || wasBrush !== (brushTab() || objectTab())) requestRender(); // whole photo in these tabs
   drawOverlay();
   app.tool = TABS[k].tools.find((t) => (t.option === undefined && !t.kind) || t.kind === "strength" || t.kind === "brushSize") || null;
   renderTabs();
@@ -298,6 +308,15 @@ function kindTool(t, b) {
         if (app.facePick) toast("Коснитесь лица, которое нужно править", 3000);
         drawOverlay();
       }
+    } else if (t.kind === "objectPick") {
+      app.objectPick = !app.objectPick;
+      if (app.objectPick) toast("Коснитесь предмета или человека на фото", 3000);
+    } else if (t.kind === "objectClear") {
+      Object.assign(app.pipeline.step("object").values, { x: -1, y: -1 });
+      app.objectPick = false;
+      pushHistory();
+      requestRender();
+      drawOverlay();
     } else if (t.kind === "faceAll") {
       app.pipeline.step("face_select").values.faces = [];
       app.facePick = false;
@@ -324,6 +343,7 @@ function kindTool(t, b) {
   };
   if (t.kind === "aspect" && app.aspect === t.name) b.classList.add("on");
   if (t.kind === "facePick" && app.facePick) b.classList.add("on");
+  if (t.kind === "objectPick" && app.objectPick) b.classList.add("on");
   if (t.kind === "facePick") {
     const sel = selectedFaces(app.pipeline.step("face_select").values);
     if (sel.length) b.innerHTML = `<span class="dot"></span>Лица: ${sel.map((i) => i + 1).join(", ")}`;
@@ -436,6 +456,7 @@ $("tool-value").addEventListener("click", () => {
 // --- rendering ---------------------------------------------------------------------------------
 const frameTab = () => TABS[app.tab].name === "Кадр";
 const brushTab = () => TABS[app.tab].name === "Кисти";
+const objectTab = () => TABS[app.tab].name === "Объект";
 const frameValues = () => app.pipeline.step("crop").values;
 
 function previewState() {
@@ -444,7 +465,7 @@ function previewState() {
     const c = st.steps.find((s) => s.op === "crop");
     c.values = { ...c.values, x0: 0, y0: 0, x1: 1, y1: 1 };
   }
-  if (brushTab() || app.facePick) st.steps.find((s) => s.op === "crop").enabled = false; // whole-photo coordinates
+  if (brushTab() || objectTab() || app.facePick) st.steps.find((s) => s.op === "crop").enabled = false; // whole-photo coordinates
   return st;
 }
 
@@ -462,6 +483,7 @@ engine.onPreview = (image, ms, before, key) => {
   if (!beforeHeld) show(image);
   $("busy").hidden = true;
   updateFrame();
+  drawOverlay();
   console.debug(`preview ${ms.toFixed(0)} ms`);
 };
 
@@ -590,6 +612,11 @@ const pointerEnd = (e) => {
     gesture = null;
     return;
   }
+  if (gesture?.kind === "pan" && !gesture.moved && e.type === "pointerup" && app.objectPick) {
+    pickObject(...toPhoto(e.clientX, e.clientY));
+    gesture = null;
+    return;
+  }
   if (gesture?.kind === "pan" && !gesture.moved && e.type === "pointerup" && app.facePick) {
     toggleFaceAt(...toPhoto(e.clientX, e.clientY));
     gesture = null;
@@ -685,6 +712,53 @@ function cancelStroke() {
 
 // painted mask corrections, tinted by layer, while the «Маски» brushes are selected
 const LAYER_COLORS = ["rgba(230,60,60,0.38)", "rgba(250,200,60,0.38)", "rgba(90,200,90,0.38)", "rgba(60,140,230,0.38)"];
+const objectConfs = new Map(); // tapped point -> magic-touch mask (for the outline)
+
+async function pickObject(x, y) {
+  if (x < 0 || y < 0 || x > 1 || y > 1) return;
+  app.objectPick = false;
+  $("busy").hidden = false;
+  try {
+    const conf = await objectMask(app.original, x, y);
+    objectConfs.set(objectKey(x, y), conf);
+    engine.setObjectMask(x, y, conf);
+    Object.assign(app.pipeline.step("object").values, { x, y });
+    pushHistory();
+    renderTools();
+    requestRender();
+    drawOverlay();
+    toast("Объект выбран — двигайте ползунки", 2500);
+  } catch (err) {
+    console.error(err);
+    toast("Не удалось выделить объект");
+  }
+  $("busy").hidden = true;
+}
+
+// outline of the selected object (cached per selection)
+let outlineCache = { key: "", canvas: null };
+function drawObjectOutline(g, W, H) {
+  const v = app.pipeline.step("object").values, key = objectKey(v.x ?? -1, v.y ?? -1), conf = objectConfs.get(key);
+  if (!conf || !(v.x >= 0)) return;
+  if (outlineCache.key !== key) {
+    const c = document.createElement("canvas");
+    c.width = conf.w;
+    c.height = conf.h;
+    const id = c.getContext("2d").createImageData(conf.w, conf.h), d = conf.data, w = conf.w;
+    for (let y = 1; y < conf.h - 1; y++)
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x, inside = d[i] > 0.5;
+        if (!inside) continue;
+        if (d[i - 1] > 0.5 && d[i + 1] > 0.5 && d[i - w] > 0.5 && d[i + w] > 0.5) continue;
+        id.data.set([255, 214, 64, 255], 4 * i);
+      }
+    c.getContext("2d").putImageData(id, 0, 0);
+    outlineCache = { key, canvas: c };
+  }
+  g.imageSmoothingEnabled = false;
+  for (const [dx, dy] of [[0, 0], [1, 0], [0, 1]]) g.drawImage(outlineCache.canvas, dx, dy, W, H); // a bit thicker
+}
+
 function toggleFaceAt(x, y) {
   const faces = app.analysis?.faces || [];
   let best = -1, bestD = Infinity;
@@ -734,6 +808,17 @@ function drawFaces(g, W, H) {
 }
 
 function drawOverlay() {
+  if (objectTab() && !view.hidden && app.pipeline.step("object").values.x >= 0) {
+    overlay.hidden = false;
+    overlay.width = view.width;
+    overlay.height = view.height;
+    Object.assign(overlay.style, { width: view.style.width, height: view.style.height,
+      left: `${view.offsetLeft}px`, top: `${view.offsetTop}px` });
+    const g = overlay.getContext("2d");
+    g.clearRect(0, 0, overlay.width, overlay.height);
+    drawObjectOutline(g, overlay.width, overlay.height);
+    return;
+  }
   if (app.facePick && !view.hidden) { // frames of the faces to choose from
     overlay.hidden = false;
     overlay.width = view.width;
@@ -927,6 +1012,8 @@ async function openFile(file) {
     Object.assign(app.pipeline.step("crop").values, { rot90: 0, flip: 0, angle: 0, x0: 0, y0: 0, x1: 1, y1: 1 });
     app.pipeline.step("face_select").values.faces = [];
     app.facePick = false;
+    Object.assign(app.pipeline.step("object").values, { x: -1, y: -1 });
+    app.objectPick = false;
     $("welcome").hidden = true;
     view.hidden = false;
     $("panel").hidden = false;

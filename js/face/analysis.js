@@ -3,7 +3,7 @@
 //
 // Result: {faces: [{pts: Float32Array(478*2) normalised}], seg: {w, h, c: 6, data} class
 // confidences (SEG_CLASSES), poses: [{pts, vis}], person: plane | null, hair: plane | null}
-import { FilesetResolver, FaceLandmarker, ImageSegmenter, PoseLandmarker } from "../../vendor/mediapipe/vision_bundle.mjs";
+import { FilesetResolver, FaceLandmarker, ImageSegmenter, InteractiveSegmenter, PoseLandmarker } from "../../vendor/mediapipe/vision_bundle.mjs";
 import { FACE_OVAL } from "./topology.js";
 
 export const SEG_CLASSES = ["background", "hair", "body_skin", "face_skin", "clothes", "other"];
@@ -204,4 +204,19 @@ export async function analyze(full) {
   hairRes.close?.();
 
   return { faces, seg, poses, person, hair, width: W, height: H };
+}
+
+// «Объект»: the object under a tap (MediaPipe magic touch), confidence plane at 1024 px.
+let interactive = null;
+export async function objectMask(full, x, y) {
+  await loadModels();
+  interactive ||= await create(InteractiveSegmenter, {
+    baseOptions: { modelAssetPath: new URL("models/magic_touch.tflite", base).href },
+    outputConfidenceMasks: true, outputCategoryMask: false });
+  const k = Math.min(1, 1024 / Math.max(full.width, full.height));
+  const small = canvasOf(full, Math.max(1, Math.round(full.width * k)), Math.max(1, Math.round(full.height * k)));
+  const res = interactive.segment(small, { keypoint: { x, y } });
+  const plane = maskPlane(res.confidenceMasks[0]);
+  res.close?.();
+  return plane;
 }

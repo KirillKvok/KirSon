@@ -39,6 +39,11 @@ export class Engine {
     this.worker.postMessage({ type: "picture", pid, w: imageData.width, h: imageData.height, data: buf }, [buf]);
   }
 
+  setObjectMask(x, y, plane) {
+    const buf = plane.data.slice().buffer;
+    this.worker.postMessage({ type: "objectMask", x, y, w: plane.w, h: plane.h, data: buf }, [buf]);
+  }
+
   setAnalysis(analysis) {
     this.worker.postMessage({ type: "analysis", analysis });
   }
