@@ -34,8 +34,8 @@ export function refFaceWidth(img, ctx) {
 
 function resized(ctx, key, plane, w, h) {
   const k = `resized:${key}:${w}x${h}`;
-  if (!ctx.cache.has(k)) ctx.cache.set(k, I.resizeLinear(plane, w, h));
-  return ctx.cache.get(k);
+  if (!ctx.cache.has(k)) ctx.cache.set(k, I.packPlane(I.resizeLinear(plane, w, h)));
+  return I.unpackPlane(ctx.cache.get(k));
 }
 
 export function segClass(ctx, name, w, h) {
@@ -281,21 +281,23 @@ export function getMask(img, ctx, name) {
   const sel = (ctx.cache.get("face_select") || []).join(",");
   const edits = ctx.cache.get("mask_edits_key") || "";
   const key = `mask:${name}:${img.w}x${img.h}:${sel}:${edits}`;
-  let m = ctx.cache.get(key);
-  if (!m) {
+  const packed = ctx.cache.get(key);
+  if (packed) return I.unpackPlane(packed); // a fresh float copy: callers may change it
+  let m;
+  {
     const baseKey = `maskbase:${name}:${img.w}x${img.h}:${sel}`;
-    let base = ctx.cache.get(baseKey);
+    let base = ctx.cache.get(baseKey) && I.unpackPlane(ctx.cache.get(baseKey));
     if (!base) {
       base = MASKS[name](img, ctx);
       if (sel && (name === "hair" || name === "body_skin")) { // the hair / body of the chosen people only
         const near = nearFaces(img.w, img.h, getAnalysis(ctx), name === "body_skin");
         base = I.mapPlane(base, (v, i) => v * near.data[i]);
       }
-      ctx.cache.set(baseKey, base);
+      ctx.cache.set(baseKey, I.packPlane(base));
     }
     const apply = ctx.cache.get("mask_edits_apply");
     m = apply ? apply(name, base) : base;
-    ctx.cache.set(key, m);
+    ctx.cache.set(key, I.packPlane(m));
   }
   return m;
 }

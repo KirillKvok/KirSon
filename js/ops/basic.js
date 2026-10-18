@@ -98,28 +98,30 @@ register("contrast", "Контраст", [P("amount", "Контраст", -100, 
 register("light", "Свет и тени", [P("shadows", "Тени", -100, 100, 0), P("highlights", "Светлые", -100, 100, 0)],
   (img, p) => {
     // local tone mapping weighted by the edge-aware local brightness (no halos)
-    const f = I.toFloat(img), lum = I.luminance(f);
-    const base = I.smoothBase(lum, Math.max(img.w, img.h) * 0.02);
+    const base = I.smoothBase(I.lumU8(img), Math.max(img.w, img.h) * 0.02);
     const sh = p.shadows / 100, hi = p.highlights / 100;
-    const ln = I.mapPlane(lum, (v, i) => {
-      const b = base.data[i];
-      const e = 1.5 * (sh * (1 - b) ** 2 + hi * b * b);
-      return Math.max(v, 1e-6) ** (2 ** -e);
+    return I.stripMap(img, (f, y0) => {
+      const lum = I.luminance(f), b = I.planeRows(base, y0, f.h);
+      const ln = I.mapPlane(lum, (v, i) => {
+        const bb = b.data[i], e = 1.5 * (sh * (1 - bb) ** 2 + hi * bb * bb);
+        return Math.max(v, 1e-6) ** (2 ** -e);
+      });
+      return I.scaleLuminance(f, ln, lum);
     });
-    return I.toU8(I.scaleLuminance(f, ln, lum));
   });
 
 register("color", "Цвет", [P("saturation", "Насыщенность", -100, 100, 0), P("vibrance", "Сочность", -100, 100, 0),
   P("temperature", "Температура", -100, 100, 0), P("tint", "Оттенок", -100, 100, 0)], (img, p) => {
-  let f = I.toFloat(img);
-  if (p.temperature || p.tint) f = whiteBalance(f, p.temperature / 100, p.tint / 100);
-  if (p.saturation || p.vibrance) f = saturate(f, p.saturation / 100, p.vibrance / 100);
-  return I.toU8(f);
+  return I.stripMap(img, (f) => {
+    if (p.temperature || p.tint) f = whiteBalance(f, p.temperature / 100, p.tint / 100);
+    if (p.saturation || p.vibrance) f = saturate(f, p.saturation / 100, p.vibrance / 100);
+    return f;
+  });
 });
 
 register("sharpen", "Чёткость", [P("sharpness", "Резкость", 0, 100, 0), P("clarity", "Детализация", -100, 100, 0)],
   (img, p, ctx) => {
-    const f = I.toFloat(img), lum = I.luminance(f), out = I.clone(lum), long = Math.max(img.w, img.h);
+    const lum = I.lumU8(img), out = I.clone(lum), long = Math.max(img.w, img.h);
     if (p.sharpness) {
       const sigma = Math.max(0.7, long / 1600);
       const blur = I.gaussian(lum, sigma);
@@ -144,5 +146,5 @@ register("sharpen", "Чёткость", [P("sharpness", "Резкость", 0, 1
       }
     }
     I.clamp01(out);
-    return I.toU8(I.scaleLuminance(f, out, lum));
+    return I.stripMap(img, (f, y0) => I.scaleLuminance(f, I.planeRows(out, y0, f.h), I.planeRows(lum, y0, f.h)));
   });

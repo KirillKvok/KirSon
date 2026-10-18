@@ -311,3 +311,5 @@ main#stage { touch-action: none; }
 .chip-btn.split { right: 78px; padding: 7px 10px; display: grid; place-items: center; }
 .chip-btn.split svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .chip-btn.split.on svg { stroke: var(--on-accent); }
+.toast { flex-wrap: wrap; justify-content: center; max-width: calc(100% - 24px); }
+.toast span { flex: 1 1 100%; text-align: center; }

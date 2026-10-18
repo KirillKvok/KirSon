@@ -16,6 +16,7 @@ import { Engine } from "./engine.js";
 import { analyze, objectMask } from "./face/analysis.js";
 import { VERSION } from "./version.js";
 import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
+import * as session from "./session.js";
 
 const PREVIEW = 1280; // preview long side (as on the desktop)
 const FAST = 640;     // while a slider is held
@@ -172,6 +173,7 @@ function pushHistory() {
   app.history.push(s);
   app.future = [];
   updateButtons();
+  if (app.original && !app.restoring) session.save({ state: s });
 }
 function restore(s) {
   app.pipeline = Pipeline.fromJSON(JSON.parse(s));
@@ -1041,8 +1043,9 @@ async function decode(file) {
   }
 }
 
-async function openFile(file) {
+async function openFile(file, { restoring = false } = {}) {
   if (!file) return;
+  if (!restoring) session.save({ file, name: file.name || "photo", state: null, exporting: false, bgFile: null, bgPid: null });
   $("busy").hidden = false;
   try {
     const img = await decode(file);
@@ -1118,6 +1121,7 @@ $("bg-file").addEventListener("change", async (e) => {
   const [w, h] = scaled(pic, 4096);
   const pid = `pic-${Date.now()}`;
   engine.setPicture(pid, imageData(pic, w, h));
+  session.save({ bgFile: file, bgPid: pid });
   setValue("background", "image", pid);
   setValue("background", "replace", REPLACE.indexOf("Своя картинка"));
   pushHistory();
@@ -1132,16 +1136,34 @@ $("btn-redo").onclick = redo;
 // --- save ---------------------------------------------------------------------------------------
 let savedFile = null;
 
-async function save() {
+const SIZE_PREF = "kirson-save-size";
+function savePref(v) {
+  try { localStorage.setItem(SIZE_PREF, v); } catch { /* private mode */ }
+}
+function sizePref() {
+  try { return localStorage.getItem(SIZE_PREF) || "full"; } catch { return "full"; }
+}
+
+// «Сохранить»: the full photo, or a lighter copy (long side EXPORT_PHONE) if the phone is short of memory
+function save() {
   if (!app.original) return;
+  const W = app.original.width, H = app.original.height;
+  if (Math.max(W, H) <= EXPORT_PHONE) return exportPhoto("full");
+  const [w, h] = scaled(app.original, EXPORT_PHONE);
+  const full = [`Полный · ${W}×${H}`, () => exportPhoto("full")], opt = [`Лёгкий · ${w}×${h}`, () => exportPhoto("optimal")];
+  toast("Сохранить фото", 0, sizePref() === "optimal" ? [opt, full] : [full, opt]);
+}
+
+async function exportPhoto(size) {
+  hideToast();
+  savePref(size);
   $("busy").hidden = false;
-  toast("Обрабатываю в полном размере…", 0);
+  toast(size === "full" ? "Обрабатываю в полном размере…" : "Обрабатываю…", 0);
+  // if Safari runs out of memory it reloads the tab: the next start restores the work
+  await session.save({ exporting: size === "full", state: snapshot() });
   try {
-    // iPhone Safari limits a tab's memory: a 12 MP photo processed in float would close the
-    // tab, so phones save at up to EXPORT_PHONE px on the long side (computers: full size).
     let src = app.original;
-    const phone = /iPhone|iPad|iPod|Android/.test(navigator.userAgent);
-    if (phone && Math.max(src.width, src.height) > EXPORT_PHONE) {
+    if (size === "optimal" && Math.max(src.width, src.height) > EXPORT_PHONE) {
       const [w, h] = scaled(src, EXPORT_PHONE);
       src = imageData(canvasOf(src), w, h);
     }
@@ -1154,11 +1176,15 @@ async function save() {
     c.getContext("2d").putImageData(image, 0, 0);
     const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.95));
     savedFile = new File([blob], `${app.name}_kirson.jpg`, { type: "image/jpeg" });
+    session.save({ exporting: false });
     // Sharing needs a fresh tap on iPhone: offer the button.
-    toast("Готово", 0, [["Сохранить в Фото", shareSaved]]);
+    toast(`Готово · ${image.width}×${image.height}`, 0, [["Сохранить в Фото", shareSaved]]);
   } catch (err) {
     console.error(err);
-    toast("Не удалось сохранить");
+    session.save({ exporting: false });
+    engine.drop("full");
+    if (size === "full") toast("Не хватило памяти телефона", 0, [["Сохранить лёгкий", () => exportPhoto("optimal")]]);
+    else toast("Не удалось сохранить");
   }
   $("busy").hidden = true;
 }
@@ -1212,6 +1238,50 @@ selectTab(0);
 updateButtons();
 // (not on the development server: a cached copy would hide fresh edits)
 $("version").textContent = `версия ${VERSION}`;
+
+// continue the previous work (the app was closed by iOS, or a full-size save ran out of memory)
+async function restoreSession(s) {
+  hideToast();
+  app.restoring = true; // opening the photo must not overwrite the saved edit
+  try {
+    await openFile(s.file, { restoring: true });
+  } finally {
+    app.restoring = false;
+  }
+  if (s.bgFile && s.bgPid) {
+    const pic = await decode(s.bgFile), [w, h] = scaled(pic, 4096);
+    engine.setPicture(s.bgPid, imageData(pic, w, h));
+  }
+  if (s.state) {
+    app.pipeline = Pipeline.fromJSON(JSON.parse(s.state));
+    app.history = [s.state];
+    app.future = [];
+    const o = app.pipeline.step("object").values; // the selected object's mask is made again
+    if (o.x >= 0) {
+      const [x, y] = [o.x, o.y];
+      const waitAnalysis = async () => { while (!app.analysis) await new Promise((r) => setTimeout(r, 300)); };
+      waitAnalysis().then(() => objectMask(app.original, x, y)).then((conf) => {
+        objectConfs.set(objectKey(x, y), conf);
+        engine.setObjectMask(x, y, conf);
+        requestRender();
+      }).catch(() => {});
+    }
+    renderTools();
+    updateButtons();
+    requestRender();
+  }
+}
+session.load().then((s) => {
+  if (!s?.file || app.preview) return;
+  if (s.exporting) {
+    savePref("optimal");
+    session.save({ exporting: false }); // say it once
+    restoreSession(s).then(() => toast("Полный размер не поместился в память телефона. Правки сохранены — сохраните «Лёгкий» вариант.",
+      0, [["Сохранить", save]]));
+  } else {
+    toast("Продолжить с прошлого фото?", 0, [["Продолжить", () => restoreSession(s)], ["Новое", () => { session.clear(); hideToast(); }]]);
+  }
+});
 
 function showEditorTour() {
   selectTab(0); // «Образы»: the «Авто» button is on screen

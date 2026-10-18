@@ -32,7 +32,7 @@ register("filter", "Фильтр", [choice("style", "Стиль", FILTER_NAMES, 
   (img, p) => {
     const look = LOOKS[FILTER_NAMES[p.style]];
     if (!look || p.amount <= 0) return img;
-    return blend(img, I.toU8(I.clamp01(look(I.toFloat(img)))), p.amount / 100);
+    return blend(img, I.stripMap(img, (f) => I.clamp01(look(f))), p.amount / 100);
   });
 
 const noiseCache = new Map();
@@ -51,11 +51,14 @@ register("grain", "Зерно", [P("amount", "Сила зерна", 0, 100, 0), 
       noiseCache.clear();
       noiseCache.set(key, noise);
     }
-    const f = I.toFloat(img), d = f.data, k = (p.amount / 100) * 0.07;
-    for (let i = 0, j = 0; i < w * h; i++, j += 3) {
-      const l = 0.2126 * d[j] + 0.7152 * d[j + 1] + 0.0722 * d[j + 2];
-      const n = noise.data[i] * (0.35 + 2.6 * l * (1 - l)) * k;
-      d[j] += n; d[j + 1] += n; d[j + 2] += n;
-    }
-    return I.toU8(I.clamp01(f));
+    const k = (p.amount / 100) * 0.07;
+    return I.stripMap(img, (f, y0) => {
+      const d = f.data, o = y0 * w;
+      for (let i = 0, j = 0; i < f.w * f.h; i++, j += 3) {
+        const l = 0.2126 * d[j] + 0.7152 * d[j + 1] + 0.0722 * d[j + 2];
+        const n = noise.data[o + i] * (0.35 + 2.6 * l * (1 - l)) * k;
+        d[j] += n; d[j + 1] += n; d[j + 2] += n;
+      }
+      return I.clamp01(f);
+    });
   }, { active: (p) => p.amount > 0 });

@@ -39,7 +39,7 @@ self.onmessage = (e) => {
   try {
     if (m.type === "image") {
       const img = { w: m.w, h: m.h, data: rgbaToRgb(new Uint8ClampedArray(m.data), m.w, m.h) };
-      const ctx = new Context(m.scale);
+      const ctx = new Context(m.scale, new Map(), { noCache: m.key === "full" });
       ctx.cache.set("_imageId", m.imageId);
       if (analysis && analysis.imageId === m.imageId) ctx.cache.set("analysis", analysis);
       images.set(m.key, { img, ctx });

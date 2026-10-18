@@ -457,3 +457,41 @@ export function percentile(values, q) {
   const a = Float32Array.from(values).sort();
   return a.length ? a[Math.min(a.length - 1, Math.max(0, Math.round(q * (a.length - 1))))] : 0;
 }
+
+// Luminance plane straight from a uint8 RGB image (no float RGB copy of the whole photo).
+export function lumU8(img) {
+  const n = img.w * img.h, out = new Float32Array(n), d = img.data, k = 1 / 255;
+  for (let i = 0, j = 0; i < n; i++, j += 3) out[i] = (0.2126 * d[j] + 0.7152 * d[j + 1] + 0.0722 * d[j + 2]) * k;
+  return fimg(img.w, img.h, 1, out);
+}
+
+// Run a per-pixel float edit in horizontal strips: fn(floatStrip, y0) -> floatStrip.
+// Memory stays at one strip in float instead of the whole photo (12 MP: 146 MB per float copy).
+export const STRIP_ROWS = 256;
+export function stripMap(img, fn) {
+  const out = new Uint8ClampedArray(img.data.length);
+  for (let y0 = 0; y0 < img.h; y0 += STRIP_ROWS) {
+    const y1 = Math.min(img.h, y0 + STRIP_ROWS);
+    const r = fn(cropFloat(img, { x0: 0, y0, x1: img.w, y1 }), y0);
+    const o = y0 * img.w * 3;
+    for (let i = 0; i < r.data.length; i++) out[o + i] = r.data[i] * 255 + 0.5;
+  }
+  return { w: img.w, h: img.h, data: out };
+}
+
+// rows y0..y0+h of a plane (a view, no copy)
+export function planeRows(p, y0, h) {
+  return fimg(p.w, h, 1, p.data.subarray(y0 * p.w, (y0 + h) * p.w));
+}
+
+// 0..1 planes kept in caches as bytes (4x less memory; masks do not need more precision)
+export function packPlane(p) {
+  const d = new Uint8Array(p.data.length);
+  for (let i = 0; i < d.length; i++) d[i] = Math.min(255, Math.max(0, p.data[i] * 255 + 0.5));
+  return { w: p.w, h: p.h, packed: d };
+}
+export function unpackPlane(q) {
+  const out = new Float32Array(q.packed.length), k = 1 / 255;
+  for (let i = 0; i < out.length; i++) out[i] = q.packed[i] * k;
+  return fimg(q.w, q.h, 1, out);
+}

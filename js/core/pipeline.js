@@ -33,9 +33,11 @@ export function isIdentity(op, values) {
 }
 
 export class Context {
-  constructor(scale = 1, cache = new Map()) {
+  // noCache: do not keep every step's output (export: at 12 MP each is 36 MB)
+  constructor(scale = 1, cache = new Map(), { noCache = false } = {}) {
     this.scale = scale;
     this.cache = cache; // also holds the face analysis, masks, step outputs
+    this.noCache = noCache;
   }
 }
 
@@ -76,7 +78,7 @@ export class Pipeline {
       if (hit && hit.sig === sig) out = hit.out;
       else {
         out = op.apply(out, values, ctx);
-        cache.set(i, { sig, out });
+        if (!ctx.noCache) cache.set(i, { sig, out });
       }
     });
     return out;
