@@ -38,6 +38,10 @@ const TABS = [
     ],
   },
   {
+    name: "Мои",
+    get tools() { return mineTools(); },
+  },
+  {
     name: "Лицо",
     tools: [
       ...[["skin", "smooth"], ["skin", "blemish"], ["face_light", "matte"], ["skin_tone", "even"],
@@ -144,6 +148,7 @@ const app = {
   tool: null,       // current slider tool {op, param, label}
   aspect: "Свободно", // crop frame proportions
   brush: { tool: "liquify", mode: 0, size: 25, strength: 50 },
+  versions: [],     // [{name, state, thumb}] of this photo (kept in the session)
   split: false,     // before / after divider on the photo
   splitPos: 0.5,
   before: null,     // the original in the result's frame (when cropped)
@@ -257,8 +262,129 @@ function applyValues(vals) {
 function applyLook(push = true) {
   if (!app.look) return;
   applyValues(scaleLook(LOOKS[app.look], app.lookStrength / 100));
-  if (push) pushHistory();
+  if (push) {
+    pushHistory();
+    addVersion(`${app.look}${app.lookStrength === 100 ? "" : ` ${app.lookStrength}%`}`);
+  }
   requestRender();
+}
+
+// --- my presets (this phone, any photo) and versions (this photo) ---------------------------------
+const PRESETS_KEY = "kirson-presets", MAX_VERSIONS = 12;
+// a preset carries the look of the edit, not what belongs to one photo
+const NOT_PORTABLE = ["crop", "face_select", "liquify", "mask_edit", "heal", "object"];
+
+function myPresets() {
+  try { return JSON.parse(localStorage.getItem(PRESETS_KEY)) || []; } catch { return []; }
+}
+function storePresets(list) {
+  try {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(list));
+    return true;
+  } catch {
+    toast("Не удалось сохранить пресет");
+    return false;
+  }
+}
+// the changed sliders of the current edit (hidden values — strokes, pictures — are left out)
+function portableValues() {
+  const out = {};
+  for (const st of app.pipeline.steps) {
+    if (NOT_PORTABLE.includes(st.op) || !st.enabled || !REGISTRY[st.op]) continue;
+    const v = {};
+    for (const p of REGISTRY[st.op].params) {
+      const x = st.values[p.name];
+      if (!p.hidden && x !== undefined && JSON.stringify(x) !== JSON.stringify(p.def)) v[p.name] = x;
+    }
+    if (Object.keys(v).length) out[st.op] = v;
+  }
+  return out;
+}
+
+function savePreset() {
+  const vals = portableValues();
+  if (!Object.keys(vals).length) return toast("Сначала настройте фото — пресет запоминает ваши правки");
+  const list = myPresets();
+  const name = (prompt("Название пресета", `Мой пресет ${list.length + 1}`) || "").trim().slice(0, 40);
+  if (!name) return;
+  const i = list.findIndex((p) => p.name === name);
+  if (i >= 0) list[i].values = vals;
+  else list.push({ name, values: vals });
+  if (storePresets(list)) toast(`Пресет «${name}» сохранён — он работает с любым фото`);
+  renderTools();
+}
+
+function applyPreset(p) {
+  app.look = null;
+  applyValues(p.values);
+  pushHistory();
+  addVersion(p.name);
+  renderTools();
+  requestRender();
+}
+
+function deletePreset(p) {
+  toast(`Удалить пресет «${p.name}»?`, 0, [["Удалить", () => {
+    storePresets(myPresets().filter((x) => x.name !== p.name));
+    hideToast();
+    renderTools();
+  }], ["Отмена", hideToast]]);
+}
+
+function addVersion(name) {
+  if (!app.original) return;
+  const state = snapshot();
+  if (app.versions.some((v) => v.state === state)) return;
+  const v = { name: name || `Версия ${app.versions.length + 1}`, state, thumb: null };
+  app.versions = [...app.versions, v].slice(-MAX_VERSIONS);
+  app.thumbFor = v; // the next preview of this state becomes its picture
+  session.save({ versions: app.versions });
+  if (mineTab()) renderTools();
+}
+
+function openVersion(v) {
+  app.pipeline = Pipeline.fromJSON(JSON.parse(v.state));
+  app.look = null;
+  pushHistory();
+  renderTools();
+  requestRender();
+  drawOverlay();
+}
+
+function deleteVersion(v) {
+  toast(`Удалить «${v.name}»?`, 0, [["Удалить", () => {
+    app.versions = app.versions.filter((x) => x !== v);
+    session.save({ versions: app.versions });
+    hideToast();
+    renderTools();
+  }], ["Отмена", hideToast]]);
+}
+
+function versionThumb(image) {
+  const k = 96 / Math.max(image.width, image.height), c = document.createElement("canvas");
+  c.width = Math.round(image.width * k);
+  c.height = Math.round(image.height * k);
+  c.getContext("2d").drawImage(canvasOf(image), 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.75);
+}
+
+function mineTools() {
+  const tools = [{ kind: "presetSave", label: "＋ Сохранить пресет" }];
+  for (const p of myPresets()) tools.push({ kind: "myPreset", preset: p, label: p.name });
+  tools.push({ kind: "versionSave", label: "＋ Запомнить версию" });
+  for (const v of [...app.versions].reverse()) tools.push({ kind: "version", version: v, label: v.name });
+  return tools;
+}
+
+// long press (iPhone has no right click): fn instead of the tap
+function onLongPress(b, fn) {
+  let timer = 0;
+  b.addEventListener("pointerdown", () => {
+    b.dataset.long = "";
+    timer = setTimeout(() => { b.dataset.long = "1"; fn(); }, 550);
+  });
+  for (const ev of ["pointerup", "pointerleave", "pointercancel"]) b.addEventListener(ev, () => clearTimeout(timer));
+  b.addEventListener("contextmenu", (e) => e.preventDefault());
 }
 
 async function runAuto() {
@@ -269,6 +395,7 @@ async function runAuto() {
     applyValues(await engine.auto("preview"));
     app.look = null;
     pushHistory();
+    addVersion("Авто");
     renderTools();
     requestRender();
     toast("Подобрано под это фото — можно подправить на вкладках");
@@ -282,8 +409,31 @@ function kindTool(t, b) {
   const on = (t.kind === "look" && app.look === t.name) || (t.kind === "strength" && app.tool === t);
   b.className = "tool" + (on ? " on" : "") + (t.kind === "auto" ? " accent" : "");
   b.innerHTML = `<span class="dot"></span>${t.label}`;
+  if (t.kind === "version") {
+    b.classList.add("version");
+    if (snapshot() === t.version.state) b.classList.add("on");
+    b.innerHTML = (t.version.thumb ? `<img alt="" src="${t.version.thumb}">` : `<span class="dot"></span>`)
+      + `<span></span>`;
+    b.lastChild.textContent = t.label;
+  } else if (t.kind === "myPreset") {
+    b.innerHTML = `<span class="dot"></span><span></span>`;
+    b.lastChild.textContent = t.label; // the user's own text
+  }
+  if (t.kind === "version" || t.kind === "myPreset") {
+    onLongPress(b, () => (t.kind === "version" ? deleteVersion(t.version) : deletePreset(t.preset)));
+  }
   b.onclick = () => {
+    if (b.dataset.long === "1") return;
     if (t.kind === "auto") return runAuto();
+    if (t.kind === "presetSave") return savePreset();
+    if (t.kind === "myPreset") return applyPreset(t.preset);
+    if (t.kind === "versionSave") {
+      if (!app.original) return;
+      const n = app.versions.length;
+      addVersion();
+      return toast(app.versions.length > n ? "Версия запомнена — нажмите на неё, чтобы вернуться" : "Такая версия уже есть");
+    }
+    if (t.kind === "version") return openVersion(t.version);
     if (t.kind === "look") {
       app.look = t.name;
       app.tool = TABS[app.tab].tools.find((x) => x.kind === "strength");
@@ -292,6 +442,7 @@ function kindTool(t, b) {
       app.look = null;
       applyValues(BUILTIN[t.name]);
       pushHistory();
+      addVersion(t.name);
       requestRender();
     } else if (t.kind === "reset") {
       app.look = null;
@@ -391,6 +542,11 @@ function renderTools() {
 function renderSlider() {
   const t = app.tool, s = $("slider");
   $("slider-row").style.visibility = t ? "visible" : "hidden";
+  const hint = mineTab() ? (app.versions.length || myPresets().length
+    ? "Нажмите — применить, удерживайте — удалить"
+    : "Пресеты — для любого фото, версии — для этого") : "";
+  $("panel-hint").hidden = !hint;
+  $("panel-hint").textContent = hint;
   if (!t) return;
   if (t.kind === "brushSize" || t.kind === "brushStrength") {
     const key = t.kind === "brushSize" ? "size" : "strength";
@@ -463,6 +619,7 @@ $("tool-value").addEventListener("click", () => {
 const frameTab = () => TABS[app.tab].name === "Кадр";
 const brushTab = () => TABS[app.tab].name === "Кисти";
 const objectTab = () => TABS[app.tab].name === "Объект";
+const mineTab = () => TABS[app.tab].name === "Мои";
 const frameValues = () => app.pipeline.step("crop").values;
 
 function previewState() {
@@ -484,6 +641,12 @@ function requestRender() {
 engine.onPreview = (image, ms, before, key) => {
   app.result = image;
   app.before = before;
+  if (app.thumbFor && key !== "fast" && snapshot() === app.thumbFor.state) {
+    app.thumbFor.thumb = versionThumb(image);
+    app.thumbFor = null;
+    session.save({ versions: app.versions });
+    if (mineTab()) renderTools();
+  }
   // a quick low-res render is drawn over the current canvas size (no jumps in size)
   app.fastScale = key === "fast" ? (zoom.s > 1.5 && app.detailWidth ? app.detailWidth : app.preview.width) / app.fastWidth : 1;
   if (!beforeHeld) show(image);
@@ -1045,7 +1208,11 @@ async function decode(file) {
 
 async function openFile(file, { restoring = false } = {}) {
   if (!file) return;
-  if (!restoring) session.save({ file, name: file.name || "photo", state: null, exporting: false, bgFile: null, bgPid: null });
+  if (!restoring) {
+    session.save({ file, name: file.name || "photo", state: null, exporting: false, bgFile: null, bgPid: null, versions: [] });
+    app.versions = [];
+    app.thumbFor = null;
+  }
   $("busy").hidden = false;
   try {
     const img = await decode(file);
@@ -1248,6 +1415,7 @@ async function restoreSession(s) {
   } finally {
     app.restoring = false;
   }
+  app.versions = s.versions || [];
   if (s.bgFile && s.bgPid) {
     const pic = await decode(s.bgFile), [w, h] = scaled(pic, 4096);
     engine.setPicture(s.bgPid, imageData(pic, w, h));
