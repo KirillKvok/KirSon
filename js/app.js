@@ -13,7 +13,7 @@ import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
 import { selectedFaces } from "./ops/faces.js";
 import { objectKey } from "./ops/object.js";
 import { Engine } from "./engine.js";
-import { analyze, objectMask } from "./face/analysis.js";
+import { analyze, objectMask, parseFaces, warmUpParsing } from "./face/analysis.js";
 import { VERSION } from "./version.js";
 import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
 import * as session from "./session.js";
@@ -1275,11 +1275,27 @@ async function runAnalysis(imageId) {
     console.debug(`analysis ${Math.round(performance.now() - t)} ms, faces ${a.faces.length}`);
     if (!a.faces.length) toast("Лицо не найдено — ретушь лица недоступна");
     requestRender();
+    if (a.faces.length) refineFaces(a, imageId);
   } catch (err) {
     console.error(err);
     toast("Не удалось проанализировать фото");
   }
   $("busy").hidden = true;
+}
+
+// face parsing (precise lips, brows, skin, hairline): the edit is visible at once with the
+// landmark masks and gets sharper when this is done
+async function refineFaces(a, imageId) {
+  try {
+    const t = performance.now();
+    await parseFaces(app.original, a.faces);
+    if (imageId !== app.imageId) return;
+    engine.setAnalysis(a);
+    requestRender();
+    console.debug(`face parsing ${Math.round(performance.now() - t)} ms`);
+  } catch (err) {
+    console.warn("face parsing unavailable", err); // the landmark masks stay
+  }
 }
 
 $("file").addEventListener("change", (e) => openFile(e.target.files[0]));
@@ -1449,6 +1465,7 @@ selectTab(0);
 updateButtons();
 // (not on the development server: a cached copy would hide fresh edits)
 $("version").textContent = `версия ${VERSION}`;
+setTimeout(warmUpParsing, 1500);
 
 // continue the previous work (the app was closed by iOS, or a full-size save ran out of memory)
 async function restoreSession(s) {

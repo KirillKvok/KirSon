@@ -206,6 +206,58 @@ export async function analyze(full) {
   return { faces, seg, poses, person, hair, width: W, height: H };
 }
 
+// --- face parsing (precise lips, brows, skin, hairline) -------------------------------------------
+// BiSeNet in its own worker (face/parse-worker.js) on a full-resolution crop around every face
+// (bbox + PARSE_MARGIN of the face width), 512 px: f.parse = class per pixel, f.parseBox =
+// the crop (normalised). Runs after the main analysis: the masks get sharper when it is done.
+export const PARSE_CLASSES = ["background", "skin", "l_brow", "r_brow", "l_eye", "r_eye", "eye_g", "l_ear", "r_ear",
+  "ear_r", "nose", "mouth", "u_lip", "l_lip", "neck", "neck_l", "cloth", "hair", "hat"];
+const PARSE_MARGIN = 0.35, PARSE_SIDE = 512;
+const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
+let parser = null, parseId = 0;
+const parseWaiting = new Map();
+
+function parseWorker() {
+  if (!parser) {
+    parser = new Worker(new URL("./parse-worker.js", import.meta.url), { type: "module" });
+    parser.onmessage = (e) => {
+      const w = parseWaiting.get(e.data.id);
+      parseWaiting.delete(e.data.id);
+      if (w) e.data.error ? w.reject(new Error(e.data.error)) : w.resolve(e.data.labels);
+    };
+    parser.onerror = (e) => { for (const w of parseWaiting.values()) w.reject(new Error(e.message || "parse worker")); parseWaiting.clear(); };
+  }
+  return parser;
+}
+function parseCall(data) {
+  const id = ++parseId;
+  return new Promise((resolve, reject) => {
+    parseWaiting.set(id, { resolve, reject });
+    parseWorker().postMessage({ id, data }, data ? [data.buffer] : []);
+  });
+}
+export const warmUpParsing = () => parseCall(null).catch(() => {}); // loads the model in the background
+
+// adds parse / parseBox to every face; false if parsing is not available here
+export async function parseFaces(full, faces) {
+  const W = full.width, H = full.height;
+  let src = null;
+  for (const f of faces) {
+    const b = ptp(f.pts), fw = (b.x1 - b.x0) * W, m = fw * PARSE_MARGIN;
+    const X0 = Math.max(0, Math.round(b.x0 * W - m)), Y0 = Math.max(0, Math.round(b.y0 * H - m));
+    const X1 = Math.min(W, Math.round(b.x1 * W + m)), Y1 = Math.min(H, Math.round(b.y1 * H + m));
+    if (X1 - X0 < 8 || Y1 - Y0 < 8) continue;
+    src ||= canvasOf(full, W, H);
+    const c = canvasOf(src, PARSE_SIDE, PARSE_SIDE, X0, Y0, X1 - X0, Y1 - Y0);
+    const px = c.getContext("2d").getImageData(0, 0, PARSE_SIDE, PARSE_SIDE).data, n = PARSE_SIDE * PARSE_SIDE;
+    const x = new Float32Array(3 * n);
+    for (let i = 0; i < n; i++)
+      for (let ch = 0; ch < 3; ch++) x[ch * n + i] = (px[4 * i + ch] / 255 - MEAN[ch]) / STD[ch];
+    f.parse = await parseCall(x);
+    f.parseBox = [X0 / W, Y0 / H, X1 / W, Y1 / H];
+  }
+}
+
 // «Объект»: the object under a tap (MediaPipe magic touch), confidence plane at 1024 px.
 let interactive = null;
 export async function objectMask(full, x, y) {

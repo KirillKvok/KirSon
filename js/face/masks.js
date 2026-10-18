@@ -213,8 +213,56 @@ function refinedClass(img, ctx, name) {
 
 const mul = (a, b) => I.mapPlane(a, (v, i) => v * b.data[i]);
 
+// face parsing classes (face/analysis.js PARSE_CLASSES)
+const PARSE = ["background", "skin", "l_brow", "r_brow", "l_eye", "r_eye", "eye_g", "l_ear", "r_ear",
+  "ear_r", "nose", "mouth", "u_lip", "l_lip", "neck", "neck_l", "cloth", "hair", "hat"];
+
+// Union over faces of face-parsing classes in image coordinates (soft edges from upsampling the
+// 512 px label map); null when no face was parsed.
+function parsed(img, ctx, classes) {
+  const ids = classes.map((c) => PARSE.indexOf(c));
+  let full = null;
+  for (const f of getAnalysis(ctx).faces) {
+    if (!f.parse || !f.parseBox) continue;
+    const x0 = Math.round(f.parseBox[0] * img.w), y0 = Math.round(f.parseBox[1] * img.h);
+    const x1 = Math.round(f.parseBox[2] * img.w), y1 = Math.round(f.parseBox[3] * img.h);
+    if (x1 - x0 < 2 || y1 - y0 < 2) continue;
+    const S = Math.round(Math.sqrt(f.parse.length)), m = I.fimg(S, S, 1);
+    for (let i = 0; i < m.data.length; i++) m.data[i] = ids.includes(f.parse[i]) ? 1 : 0;
+    const r = I.resizeLinear(m, x1 - x0, y1 - y0);
+    full ||= I.plane(img.w, img.h);
+    for (let y = 0; y < r.h && y0 + y < img.h; y++)
+      for (let x = 0; x < r.w && x0 + x < img.w; x++) {
+        const j = (y0 + y) * img.w + x0 + x, v = r.data[y * r.w + x];
+        if (v > full.data[j]) full.data[j] = v;
+      }
+  }
+  return full;
+}
+
+// parsed classes kept near the landmark shape `region` (a parse of a neighbour face, hair over
+// the brows ... stays out), snapped to the photo's edges
+function parsedNear(img, ctx, classes, region) {
+  const p = parsed(img, ctx, classes);
+  if (!p) return null;
+  const r = perFace(region)(img, ctx);
+  return snap(img, I.mapPlane(p, (v, i) => v * Math.min(1, r.data[i] * 1.5)), 0.002);
+}
+
+function brows(img, ctx) {
+  return parsedNear(img, ctx, ["l_brow", "r_brow"], shape([T.RIGHT_BROW, T.LEFT_BROW], 0.02, 0.03))
+    || perFace(shape([T.RIGHT_BROW, T.LEFT_BROW], 0.006, 0.004))(img, ctx);
+}
+
+function lips(img, ctx) {
+  return parsedNear(img, ctx, ["u_lip", "l_lip"], shape([T.LIPS_OUTER], 0.01, 0.015)) || perFace(lipsGeo)(img, ctx);
+}
+
 function faceSkin(img, ctx) {
-  const skin = refinedClass(img, ctx, "face_skin");
+  // face parsing knows skin from hair strands, ears and the neck; the multiclass segmenter
+  // (256 px for the whole frame) does not
+  const p = parsed(img, ctx, ["skin", "nose"]);
+  const skin = p ? snap(img, p) : refinedClass(img, ctx, "face_skin");
   if (!getAnalysis(ctx).faces.length) return skin;
   const near = perFace(shape([T.FACE_OVAL], 0.08, 0.12))(img, ctx);
   const features = perFace(shape([T.RIGHT_EYE, T.LEFT_EYE, T.RIGHT_BROW, T.LEFT_BROW, T.LIPS_OUTER], 0.012, 0.015))(img, ctx);
@@ -232,7 +280,9 @@ function hair(img, ctx) {
   const sm = I.resize(I.mapPlane(old, (v) => (v > 0.3 ? 1 : 0)), Math.round(img.w * s), Math.round(img.h * s));
   let near = I.gaussian(dilate(sm, Math.max(1, r * s)), Math.max(0.5, (r * s) / 2));
   near = I.resizeLinear(near, img.w, img.h);
-  return snap(img, mul(fresh, near));
+  const h = mul(fresh, near), p = parsed(img, ctx, ["hair"]); // the precise hairline around the face
+  if (p) for (let i = 0; i < h.data.length; i++) if (fresh.data[i] > 0.2 && p.data[i] > h.data[i]) h.data[i] = p.data[i];
+  return snap(img, h);
 }
 
 function sclera(img, ctx) {
@@ -247,13 +297,13 @@ export const MASKS = {
   body_skin: (img, ctx) => refinedClass(img, ctx, "body_skin"),
   hair,
   person: (img, ctx) => refinedClass(img, ctx, "person"),
-  lips: perFace(lipsGeo),
+  lips,
   mouth_inner: perFace(shape([T.LIPS_INNER], 0.004)),
   teeth: perFace(teeth),
   eyes: perFace(shape([T.RIGHT_EYE, T.LEFT_EYE], 0.003)),
   iris: perFace(iris),
   sclera,
-  brows: perFace(shape([T.RIGHT_BROW, T.LEFT_BROW], 0.006, 0.004)),
+  brows,
   cheeks: perFace(cheeks),
   eyeliner: perFace(eyeliner),
   contour_shadow: perFace(contourShadow),
