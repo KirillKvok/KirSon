@@ -2,7 +2,7 @@
 // tab's tools, tabs. Processing runs in a worker (engine.js); the original never leaves the phone.
 import "./ops/index.js";
 import { ORDER } from "./ops/index.js";
-import { REGISTRY, Pipeline, defaults } from "./core/pipeline.js";
+import { REGISTRY, Pipeline, defaults, isIdentity } from "./core/pipeline.js";
 import { FILTER_NAMES } from "./ops/filters.js";
 import { LIP_COLORS, BLUSH_COLORS } from "./ops/makeup.js";
 import { HAIR_NAMES } from "./ops/hair.js";
@@ -17,6 +17,7 @@ import { analyze, objectMask } from "./face/analysis.js";
 import { VERSION } from "./version.js";
 import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
 import * as session from "./session.js";
+import { FORMATS, fit, facesFocus } from "./social.js";
 
 const PREVIEW = 1280; // preview long side (as on the desktop)
 const FAST = 640;     // while a slider is held
@@ -1311,19 +1312,25 @@ function sizePref() {
   try { return localStorage.getItem(SIZE_PREF) || "full"; } catch { return "full"; }
 }
 
-// «Сохранить»: the full photo, or a lighter copy (long side EXPORT_PHONE) if the phone is short of memory
+// «Сохранить»: the full photo, a lighter copy (long side EXPORT_PHONE) if the phone is short of
+// memory, or a copy made for a social network
 function save() {
   if (!app.original) return;
-  const W = app.original.width, H = app.original.height;
-  if (Math.max(W, H) <= EXPORT_PHONE) return exportPhoto("full");
+  const W = app.original.width, H = app.original.height, social = ["Для соцсетей", saveSocial];
+  if (Math.max(W, H) <= EXPORT_PHONE) return toast("Сохранить фото", 0, [[`Полный · ${W}×${H}`, () => exportPhoto("full")], social]);
   const [w, h] = scaled(app.original, EXPORT_PHONE);
   const full = [`Полный · ${W}×${H}`, () => exportPhoto("full")], opt = [`Лёгкий · ${w}×${h}`, () => exportPhoto("optimal")];
-  toast("Сохранить фото", 0, sizePref() === "optimal" ? [opt, full] : [full, opt]);
+  toast("Сохранить фото", 0, [...(sizePref() === "optimal" ? [opt, full] : [full, opt]), social]);
 }
 
-async function exportPhoto(size) {
+function saveSocial() {
+  toast("Размер соцсети: обрезка по лицам, без геометки", 0,
+    Object.entries(FORMATS).map(([k, f]) => [f.label, () => exportPhoto("optimal", k)]));
+}
+
+async function exportPhoto(size, social = null) {
   hideToast();
-  savePref(size);
+  if (!social) savePref(size);
   $("busy").hidden = false;
   toast(size === "full" ? "Обрабатываю в полном размере…" : "Обрабатываю…", 0);
   // if Safari runs out of memory it reloads the tab: the next start restores the work
@@ -1337,15 +1344,25 @@ async function exportPhoto(size) {
     engine.setImage("full", src, src.width / app.original.width, app.imageId);
     const { image } = await engine.render("full", app.pipeline.toJSON());
     engine.drop("full");
-    const c = document.createElement("canvas");
-    c.width = image.width;
-    c.height = image.height;
-    c.getContext("2d").putImageData(image, 0, 0);
-    const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.95));
-    savedFile = new File([blob], `${app.name}_kirson.jpg`, { type: "image/jpeg" });
+    let c;
+    if (social) {
+      // the faces lead the crop when the frame is the photo's own (otherwise the frame's centre)
+      const own = isIdentity(REGISTRY.crop, app.pipeline.step("crop").values);
+      const idx = selectedFaces(app.pipeline.step("face_select").values), all = (own && app.analysis?.faces) || [];
+      const faces = idx.length ? idx.map((i) => all[i]).filter(Boolean) : all;
+      c = fit(image, FORMATS[social], facesFocus(faces));
+    } else {
+      c = document.createElement("canvas");
+      c.width = image.width;
+      c.height = image.height;
+      c.getContext("2d").putImageData(image, 0, 0);
+    }
+    const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", social ? 0.92 : 0.95));
+    const suffix = social ? FORMATS[social].suffix : "kirson";
+    savedFile = new File([blob], `${app.name}_${suffix}.jpg`, { type: "image/jpeg" });
     session.save({ exporting: false });
     // Sharing needs a fresh tap on iPhone: offer the button.
-    toast(`Готово · ${image.width}×${image.height}`, 0, [["Сохранить в Фото", shareSaved]]);
+    toast(`Готово · ${c.width}×${c.height}`, 0, [["Сохранить в Фото", shareSaved]]);
   } catch (err) {
     console.error(err);
     session.save({ exporting: false });
