@@ -3,7 +3,7 @@
 import "./ops/index.js";
 import { ORDER } from "./ops/index.js";
 import { REGISTRY, Pipeline, defaults, isIdentity } from "./core/pipeline.js";
-import { FILTER_NAMES } from "./ops/filters.js";
+import { FILTER_NAMES, filterThumb } from "./ops/filters.js";
 import { LIP_COLORS, BLUSH_COLORS } from "./ops/makeup.js";
 import { HAIR_NAMES } from "./ops/hair.js";
 import { REPLACE } from "./ops/background.js";
@@ -131,10 +131,10 @@ const TABS = [
   {
     name: "Фильтры",
     tools: [
-      ...FILTER_NAMES.map((n, k) => ({ op: "filter", param: "style", option: k, label: n })),
       { op: "filter", param: "amount", label: "Сила фильтра" },
       { op: "grain", param: "amount", label: "Зерно" },
       { op: "grain", param: "size", label: "Размер зерна" },
+      ...FILTER_NAMES.map((n, k) => ({ op: "filter", param: "style", option: k, label: n })),
     ],
   },
 ];
@@ -514,6 +514,44 @@ function kindTool(t, b) {
   if ((t.kind === "brushSize" || t.kind === "brushStrength") && app.tool === t) b.classList.add("on");
 }
 
+// filter buttons show the photo with that filter (a 64 px square around the face), made once per photo
+const thumbs = { id: -1, base: null, urls: new Map() };
+function filterThumbFor(k) {
+  if (!app.preview) return null;
+  if (thumbs.id !== app.imageId) {
+    const W = app.preview.width, H = app.preview.height, side = Math.min(W, H) * 0.6;
+    const f = app.analysis?.faces?.[0];
+    let cx = W / 2, cy = H / 2;
+    if (f) {
+      let sx = 0, sy = 0;
+      for (let i = 0; i < f.pts.length; i += 2) { sx += f.pts[i]; sy += f.pts[i + 1]; }
+      cx = (sx / (f.pts.length / 2)) * W; cy = (sy / (f.pts.length / 2)) * H;
+    }
+    const x0 = Math.max(0, Math.min(W - side, cx - side / 2)), y0 = Math.max(0, Math.min(H - side, cy - side / 2));
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const g = c.getContext("2d");
+    g.imageSmoothingQuality = "high";
+    g.drawImage(canvasOf(app.preview), x0, y0, side, side, 0, 0, 64, 64);
+    const d = g.getImageData(0, 0, 64, 64).data, rgb = new Uint8ClampedArray(64 * 64 * 3);
+    for (let i = 0; i < 64 * 64; i++) for (let ch = 0; ch < 3; ch++) rgb[3 * i + ch] = d[4 * i + ch];
+    Object.assign(thumbs, { id: app.imageId, base: { w: 64, h: 64, data: rgb }, urls: new Map(), face: !!f });
+  }
+  if (!thumbs.face && app.analysis?.faces?.length) thumbs.id = -1; // the face is known now: centre on it
+  if (!thumbs.urls.has(k)) {
+    const out = filterThumb(thumbs.base, FILTER_NAMES[k]), c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const id = c.getContext("2d").createImageData(64, 64);
+    for (let i = 0; i < 64 * 64; i++) {
+      for (let ch = 0; ch < 3; ch++) id.data[4 * i + ch] = out.data[3 * i + ch];
+      id.data[4 * i + 3] = 255;
+    }
+    c.getContext("2d").putImageData(id, 0, 0);
+    thumbs.urls.set(k, c.toDataURL("image/jpeg", 0.8));
+  }
+  return thumbs.urls.get(k);
+}
+
 function renderTools() {
   const row = $("tools");
   row.innerHTML = "";
@@ -530,6 +568,11 @@ function renderTools() {
     const changed = !isChoice && v !== p.def;
     b.className = "tool" + (on ? " on" : "") + (changed ? " changed" : "");
     b.innerHTML = `<span class="dot"></span>${toolLabel(t)}`;
+    const thumb = t.op === "filter" && t.param === "style" && filterThumbFor(t.option);
+    if (thumb) {
+      b.classList.add("thumb");
+      b.innerHTML = `<img alt="" src="${thumb}"><span>${toolLabel(t)}</span>`;
+    }
     b.onclick = () => {
       if (t.action === "pickBackground") return $("bg-file").click();
       if (isChoice) {

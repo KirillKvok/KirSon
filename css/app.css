@@ -339,3 +339,9 @@ main#stage { touch-action: none; }
 .tool.reset-tab { color: var(--accent); }
 /* brush size preview while the slider moves */
 #ring.preview { background: rgba(255, 255, 255, 0.18); transition: width 0.06s, height 0.06s; }
+
+/* filter buttons with the photo itself */
+.tool.thumb { flex-direction: column; gap: 5px; padding: 5px 5px 7px; font-size: 11.5px; }
+.tool.thumb img { width: 58px; height: 58px; border-radius: 10px; object-fit: cover; display: block; }
+.tool.thumb .dot { display: none; }
+.tool.thumb.on img { outline: 2px solid var(--accent); outline-offset: 1px; }
