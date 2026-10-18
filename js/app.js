@@ -7,7 +7,8 @@ import { FILTER_NAMES, filterThumb } from "./ops/filters.js";
 import { LIP_COLORS, BLUSH_COLORS } from "./ops/makeup.js";
 import { HAIR_NAMES } from "./ops/hair.js";
 import { REPLACE } from "./ops/background.js";
-import { LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
+import { LOOKS as BASE_LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
+import { MORE_LOOKS, MORE_PRESETS } from "./core/styles.js";
 import { ASPECTS, rectOf } from "./ops/crop.js";
 import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
 import { selectedFaces } from "./ops/faces.js";
@@ -20,6 +21,8 @@ import * as session from "./session.js";
 import { FORMATS, fit, facesFocus } from "./social.js";
 import { videoSupported, record } from "./video.js";
 
+// the desktop's looks and presets plus the web's own styles (core/styles.js)
+const LOOKS = { ...BASE_LOOKS, ...MORE_LOOKS }, PRESETS = { ...BUILTIN, ...MORE_PRESETS };
 const PREVIEW = 1280; // preview long side (as on the desktop)
 const FAST = 640;     // while a slider is held
 const DETAIL = 2048;  // preview long side when zoomed in (fine detail)
@@ -35,7 +38,7 @@ const TABS = [
       { kind: "auto", label: "✦ Авто" },
       ...Object.keys(LOOKS).map((name) => ({ kind: "look", name, label: name })),
       { kind: "strength", label: "Сила образа" },
-      ...Object.keys(BUILTIN).map((name) => ({ kind: "preset", name, label: name })),
+      ...Object.keys(PRESETS).map((name) => ({ kind: "preset", name, label: name })),
       { kind: "reset", label: "Без обработки" },
     ],
   },
@@ -443,7 +446,7 @@ function kindTool(t, b) {
       applyLook();
     } else if (t.kind === "preset") {
       app.look = null;
-      applyValues(BUILTIN[t.name]);
+      applyValues(PRESETS[t.name]);
       pushHistory();
       addVersion(t.name);
       requestRender();
