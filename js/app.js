@@ -9,6 +9,7 @@ import { HAIR_NAMES } from "./ops/hair.js";
 import { REPLACE } from "./ops/background.js";
 import { LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
 import { ASPECTS, rectOf } from "./ops/crop.js";
+import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
 import { Engine } from "./engine.js";
 import { analyze } from "./face/analysis.js";
 import { VERSION } from "./version.js";
@@ -78,6 +79,17 @@ const TABS = [
     ],
   },
   {
+    name: "Кисти",
+    tools: [
+      ...LIQUIFY_MODES.map((label, mode) => ({ kind: "brush", tool: "liquify", mode, label })),
+      { kind: "brush", tool: "heal", mode: 0, label: "Заплатка" },
+      ...MASK_LAYERS.map((label, mode) => ({ kind: "brush", tool: "mask_edit", mode, label })),
+      { kind: "brushSize", label: "Размер кисти" },
+      { kind: "brushStrength", label: "Сила кисти" },
+      { kind: "brushClear", label: "Стереть мазки" },
+    ],
+  },
+  {
     name: "Кадр",
     tools: [
       ...Object.keys(ASPECTS).map((name) => ({ kind: "aspect", name, label: name })),
@@ -115,6 +127,7 @@ const app = {
   tab: 0,
   tool: null,       // current slider tool {op, param, label}
   aspect: "Свободно", // crop frame proportions
+  brush: { tool: "liquify", mode: 0, size: 25, strength: 50 },
   before: null,     // the original in the result's frame (when cropped)
   look: null,       // chosen look and its strength (0..150 %)
   lookStrength: 100,
@@ -147,6 +160,7 @@ function restore(s) {
   app.pipeline = Pipeline.fromJSON(JSON.parse(s));
   renderTools();
   requestRender();
+  drawOverlay();
 }
 function undo() {
   if (app.history.length < 2) return;
@@ -196,11 +210,12 @@ function canvasOf(imageData) {
 }
 
 function selectTab(k) {
-  const wasFrame = frameTab();
+  const wasFrame = frameTab(), wasBrush = brushTab();
   app.tab = k;
   if (frameTab()) resetZoom(); // the frame editor works on the whole, unzoomed photo
-  if (wasFrame !== frameTab()) requestRender(); // the frame editor shows the whole photo
-  app.tool = TABS[k].tools.find((t) => (t.option === undefined && !t.kind) || t.kind === "strength") || null;
+  if (wasFrame !== frameTab() || wasBrush !== brushTab()) requestRender(); // whole photo in these tabs
+  drawOverlay();
+  app.tool = TABS[k].tools.find((t) => (t.option === undefined && !t.kind) || t.kind === "strength" || t.kind === "brushSize") || null;
   renderTabs();
   renderTools();
 }
@@ -263,6 +278,18 @@ function kindTool(t, b) {
       requestRender();
     } else if (t.kind === "strength") app.tool = t;
     else if (t.kind === "aspect") setAspect(t.name);
+    else if (t.kind === "brush") {
+      Object.assign(app.brush, { tool: t.tool, mode: t.mode });
+      if (!app.tool || !["brushSize", "brushStrength"].includes(app.tool.kind))
+        app.tool = TABS[app.tab].tools.find((x) => x.kind === "brushSize");
+      drawOverlay();
+    } else if (t.kind === "brushSize" || t.kind === "brushStrength") app.tool = t;
+    else if (t.kind === "brushClear") {
+      app.pipeline.step(app.brush.tool).values.strokes = [];
+      pushHistory();
+      requestRender();
+      drawOverlay();
+    }
     else if (t.kind === "rotate") editFrame({ rot90: ((frameValues().rot90 || 0) + 1) % 4, x0: 0, y0: 0, x1: 1, y1: 1 }, true);
     else if (t.kind === "flip") {
       const f = frameValues();
@@ -274,6 +301,8 @@ function kindTool(t, b) {
     renderTools();
   };
   if (t.kind === "aspect" && app.aspect === t.name) b.classList.add("on");
+  if (t.kind === "brush" && app.brush.tool === t.tool && app.brush.mode === t.mode) b.classList.add("on");
+  if ((t.kind === "brushSize" || t.kind === "brushStrength") && app.tool === t) b.classList.add("on");
 }
 
 function renderTools() {
@@ -309,6 +338,15 @@ function renderSlider() {
   const t = app.tool, s = $("slider");
   $("slider-row").style.visibility = t ? "visible" : "hidden";
   if (!t) return;
+  if (t.kind === "brushSize" || t.kind === "brushStrength") {
+    const key = t.kind === "brushSize" ? "size" : "strength";
+    s.min = 1;
+    s.max = 100;
+    s.value = app.brush[key];
+    $("tool-label").textContent = t.label;
+    $("tool-value").textContent = `${app.brush[key]}`;
+    return;
+  }
   if (t.kind === "strength") {
     s.min = 0;
     s.max = 150;
@@ -329,6 +367,11 @@ $("slider").addEventListener("input", (e) => {
   const t = app.tool;
   if (!t) return;
   const v = Number(e.target.value);
+  if (t.kind === "brushSize" || t.kind === "brushStrength") {
+    app.brush[t.kind === "brushSize" ? "size" : "strength"] = v;
+    $("tool-value").textContent = v;
+    return;
+  }
   if (t.kind === "strength") {
     app.lookStrength = v;
     $("tool-value").textContent = v;
@@ -364,6 +407,7 @@ $("tool-value").addEventListener("click", () => {
 
 // --- rendering ---------------------------------------------------------------------------------
 const frameTab = () => TABS[app.tab].name === "Кадр";
+const brushTab = () => TABS[app.tab].name === "Кисти";
 const frameValues = () => app.pipeline.step("crop").values;
 
 function previewState() {
@@ -372,6 +416,7 @@ function previewState() {
     const c = st.steps.find((s) => s.op === "crop");
     c.values = { ...c.values, x0: 0, y0: 0, x1: 1, y1: 1 };
   }
+  if (brushTab()) st.steps.find((s) => s.op === "crop").enabled = false; // strokes: whole-photo coordinates
   return st;
 }
 
@@ -471,7 +516,11 @@ stage.addEventListener("pointerdown", (e) => {
   stage.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   const ps = [...pointers.values()];
-  if (ps.length === 2) {
+  if (ps.length === 2 && gesture?.kind === "stroke") cancelStroke(); // two fingers: zoom, not paint
+  if (ps.length === 1 && brushTab()) {
+    startStroke(e.clientX, e.clientY);
+    gesture = { kind: "stroke" };
+  } else if (ps.length === 2) {
     gesture = { kind: "pinch", d0: Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y), s0: zoom.s,
       mx: (ps[0].x + ps[1].x) / 2, my: (ps[0].y + ps[1].y) / 2, tx: zoom.tx, ty: zoom.ty };
   } else if (ps.length === 1) {
@@ -482,7 +531,9 @@ stage.addEventListener("pointermove", (e) => {
   if (!pointers.has(e.pointerId)) return;
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   const ps = [...pointers.values()];
-  if (gesture?.kind === "pinch" && ps.length >= 2) {
+  if (gesture?.kind === "stroke") {
+    moveStroke(e.clientX, e.clientY);
+  } else if (gesture?.kind === "pinch" && ps.length >= 2) {
     const d = Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y);
     const mx = (ps[0].x + ps[1].x) / 2, my = (ps[0].y + ps[1].y) / 2;
     // restore the start, then zoom around the start midpoint and follow the fingers' movement
@@ -506,7 +557,12 @@ stage.addEventListener("pointermove", (e) => {
 const pointerEnd = (e) => {
   if (!pointers.has(e.pointerId)) return;
   pointers.delete(e.pointerId);
-  if (gesture?.kind === "pan" && !gesture.moved && e.type === "pointerup") {
+  if (gesture?.kind === "stroke") {
+    endStroke();
+    gesture = null;
+    return;
+  }
+  if (gesture?.kind === "pan" && !gesture.moved && e.type === "pointerup" && !brushTab()) {
     const now = performance.now(); // double tap: zoom in at the point / back to the whole photo
     if (now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
       if (zoom.s > 1.01) resetZoom();
@@ -529,6 +585,99 @@ stage.addEventListener("wheel", (e) => {
 // iPhone Safari: no page zoom on pinch (the photo zooms instead)
 document.addEventListener("gesturestart", (e) => e.preventDefault());
 window.addEventListener("resize", fitCanvas);
+
+// --- brushes: strokes in the photo's own coordinates -------------------------------------------
+const ring = $("ring"), overlay = $("overlay");
+let stroke = null;
+
+const brushRadius = () => 0.005 + ((app.brush.size - 1) / 99) * 0.195; // of the long side
+
+function toPhoto(cx, cy) {
+  const r = view.getBoundingClientRect(); // includes the zoom
+  return [(cx - r.left) / r.width, (cy - r.top) / r.height];
+}
+
+function showRing(cx, cy) {
+  const r = view.getBoundingClientRect(), st = stage.getBoundingClientRect();
+  const d = 2 * brushRadius() * Math.max(r.width, r.height);
+  Object.assign(ring.style, { left: `${cx - st.left}px`, top: `${cy - st.top}px`, width: `${d}px`, height: `${d}px` });
+  ring.hidden = false;
+}
+
+function strokesOfTool() {
+  const st = app.pipeline.step(app.brush.tool);
+  return (st.values.strokes ||= []);
+}
+
+function startStroke(cx, cy) {
+  const [x, y] = toPhoto(cx, cy);
+  stroke = [app.brush.mode, brushRadius(), app.brush.strength / 100, x, y];
+  app.pipeline.step(app.brush.tool).values.strokes = [...strokesOfTool(), stroke];
+  app.dragging = app.brush.tool !== "heal"; // the patch looks right only in full quality
+  showRing(cx, cy);
+  requestRender();
+  drawOverlay();
+}
+
+function moveStroke(cx, cy) {
+  if (!stroke) return;
+  showRing(cx, cy);
+  const [x, y] = toPhoto(cx, cy), n = stroke.length;
+  if (Math.hypot(x - stroke[n - 2], y - stroke[n - 1]) < stroke[1] * 0.08) return; // jitter
+  stroke.push(x, y);
+  app.pipeline.step(app.brush.tool).values.strokes = [...strokesOfTool()]; // a new array: re-render
+  if (app.brush.tool !== "heal") requestRender();
+  drawOverlay();
+}
+
+function endStroke() {
+  ring.hidden = true;
+  if (!stroke) return;
+  stroke = null;
+  app.dragging = false;
+  pushHistory(); // one stroke = one undo step
+  requestRender();
+}
+
+function cancelStroke() {
+  ring.hidden = true;
+  if (!stroke) return;
+  const list = strokesOfTool();
+  app.pipeline.step(app.brush.tool).values.strokes = list.filter((s) => s !== stroke);
+  stroke = null;
+  app.dragging = false;
+  requestRender();
+  drawOverlay();
+}
+
+// painted mask corrections, tinted by layer, while the «Маски» brushes are selected
+const LAYER_COLORS = ["rgba(230,60,60,0.38)", "rgba(250,200,60,0.38)", "rgba(90,200,90,0.38)", "rgba(60,140,230,0.38)"];
+function drawOverlay() {
+  const on = brushTab() && app.brush.tool === "mask_edit" && !view.hidden;
+  overlay.hidden = !on;
+  if (!on) return;
+  overlay.width = view.width;
+  overlay.height = view.height;
+  Object.assign(overlay.style, { width: view.style.width, height: view.style.height,
+    left: `${view.offsetLeft}px`, top: `${view.offsetTop}px` });
+  const g = overlay.getContext("2d"), W = overlay.width, H = overlay.height, L = Math.max(W, H);
+  g.clearRect(0, 0, W, H);
+  g.lineCap = g.lineJoin = "round";
+  for (const s of app.pipeline.step("mask_edit").values.strokes || []) {
+    g.strokeStyle = g.fillStyle = LAYER_COLORS[s[0]] || LAYER_COLORS[0];
+    const r = s[1] * L;
+    g.lineWidth = 2 * r;
+    g.beginPath();
+    g.moveTo(s[3] * W, s[4] * H);
+    if (s.length <= 5) {
+      g.arc(s[3] * W, s[4] * H, r, 0, 2 * Math.PI);
+      g.fill();
+      continue;
+    }
+    for (let i = 5; i + 1 < s.length; i += 2) g.lineTo(s[i] * W, s[i + 1] * H);
+    g.stroke();
+  }
+}
 
 // --- crop frame editor -------------------------------------------------------------------------
 const frameEl = $("frame");
