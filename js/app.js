@@ -16,7 +16,8 @@ import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
 import { selectedFaces } from "./ops/faces.js";
 import { objectKey } from "./ops/object.js";
 import { Engine } from "./engine.js";
-import { analyze, objectMask, parseFaces, warmUpParsing, removeFill, superResolve } from "./face/analysis.js";
+import { analyze, objectMask, parseFaces, warmUpParsing, removeFill, superResolve, faceTracker } from "./face/analysis.js";
+import { openCoach } from "./coach.js";
 import { VERSION } from "./version.js";
 import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
 import * as session from "./session.js";
@@ -1758,7 +1759,11 @@ $("bg-file").addEventListener("change", async (e) => {
 for (const id of ["btn-open", "btn-open-big"]) $(id).onclick = () => $("file").click();
 // selfie: phones and tablets open the front camera right away (on a computer it would only be a file dialog)
 $("btn-camera").hidden = !matchMedia("(pointer: coarse)").matches;
-$("btn-camera").onclick = () => $("camera").click();
+// with the live camera: hints on light and angle (js/coach.js); the phone's own camera from there too
+$("btn-camera").onclick = () => {
+  if (!navigator.mediaDevices?.getUserMedia) return $("camera").click();
+  openCoach({ tracker: faceTracker, onShot: (f) => openFile(f), onNativeCamera: () => $("camera").click() });
+};
 $("camera").addEventListener("change", (e) => {
   const f = e.target.files[0];
   e.target.value = ""; // the same shot can be taken again

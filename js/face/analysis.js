@@ -342,6 +342,15 @@ export async function superResolve(small, onProgress = () => {}) { // small: Ima
   return new ImageData(out, W, H);
 }
 
+// The selfie coach's face tracker: VIDEO mode (follows the face between frames), with the head pose matrix.
+let tracker = null;
+export async function faceTracker() {
+  await loadModels(); // the fileset is shared
+  tracker ||= await create(FaceLandmarker, { baseOptions: { modelAssetPath: new URL("models/face_landmarker.task", base).href },
+    runningMode: "VIDEO", numFaces: 1, outputFacialTransformationMatrixes: true });
+  return tracker;
+}
+
 // «Объект»: the object under a tap (MediaPipe magic touch), confidence plane at 1024 px.
 let interactive = null;
 export async function objectMask(full, x, y) {
