@@ -109,7 +109,7 @@ const BY_KIND = {
   auto: "sparkle", strength: "slider", reset: "reset", facePick: "person", faceAll: "group",
   objectPick: "cursor", objectRemove: "eraser", objectClear: "close", brushSize: "size", brushStrength: "gauge",
   brushClear: "trash", aspect: "rect", rotate: "rotate", flip: "flip", frameReset: "reset",
-  presetSave: "plus", versionSave: "bookmark", compare: "grid", batch: "layers", videoEdit: "film", myPreset: "layers", preset: "layers",
+  presetSave: "plus", versionSave: "bookmark", compare: "grid", batch: "layers", enhance: "sparkle", videoEdit: "film", myPreset: "layers", preset: "layers",
 };
 const BRUSH = { liquify: ["push", "shrink", "expand"], heal: ["bandage"], mask_edit: ["shield", "brush", "person", "mountain"] };
 

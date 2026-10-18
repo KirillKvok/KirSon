@@ -16,7 +16,7 @@ import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
 import { selectedFaces } from "./ops/faces.js";
 import { objectKey } from "./ops/object.js";
 import { Engine } from "./engine.js";
-import { analyze, objectMask, parseFaces, warmUpParsing, removeFill } from "./face/analysis.js";
+import { analyze, objectMask, parseFaces, warmUpParsing, removeFill, superResolve } from "./face/analysis.js";
 import { VERSION } from "./version.js";
 import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
 import * as session from "./session.js";
@@ -132,9 +132,9 @@ const TABS = [
   },
   {
     name: "Коррекция",
-    tools: [["light", "shadows"], ["light", "highlights"], ["brightness", "amount"], ["contrast", "amount"],
+    tools: [{ kind: "enhance", label: "Улучшить качество" }, ...[["light", "shadows"], ["light", "highlights"], ["brightness", "amount"], ["contrast", "amount"],
       ["color", "saturation"], ["color", "vibrance"], ["color", "temperature"], ["color", "tint"],
-      ["sharpen", "sharpness"], ["sharpen", "clarity"]].map(([op, param]) => ({ op, param })),
+      ["sharpen", "sharpness"], ["sharpen", "clarity"]].map(([op, param]) => ({ op, param }))],
   },
   {
     name: "Фильтры",
@@ -360,6 +360,48 @@ function openVersion(v) {
   renderTools();
   requestRender();
   drawOverlay();
+}
+
+// --- «Улучшить качество»: Real-ESRGAN x4 (face/analysis.js superResolve) ------------------------------
+// The photo is scaled to a quarter of the result and the network draws the detail back 4x; mixed 70 %
+// with a plain upscale and a fine grain — at 100 % skin looked painted. Best for small or blurry
+// photos; a big sharp photo gets only the warning (and smoother skin) out of it.
+const ENHANCE_MIX = 0.7;
+function enhancePhoto() {
+  if (!app.original) return;
+  const long = Math.max(app.original.width, app.original.height);
+  const outMax = /iPhone|iPad|iPod|Android/.test(navigator.userAgent) ? 2048 : 3072;
+  const text = long > outMax * 1.1
+    ? `Фото уже большое (${long} px): нейросеть сделает его ${outMax} px, дорисует резкость и смягчит кожу. Лучше всего — для маленьких и размытых фото.`
+    : "Нейросеть дорисует мелкие детали и увеличит фото. Лучше всего — для маленьких и размытых фото.";
+  toast(text, 0, [["Улучшить", () => runEnhance(Math.min(long, outMax / 4))], ["Отмена", hideToast]]);
+}
+
+async function runEnhance(inSide) {
+  const before = app.file, name = app.name;
+  $("busy").hidden = false;
+  toast("Улучшаю качество… 0%", 0);
+  try {
+    const [sw, sh] = scaled(app.original, inSide), small = imageData(canvasOf(app.original), sw, sh);
+    const sr = await superResolve(small, (p) => { $("toast").firstChild.textContent = `Улучшаю качество… ${Math.round(p * 100)}%`; });
+    const plain = imageData(canvasOf(small), sr.width, sr.height), d = sr.data, b = plain.data;
+    let seed = 11;
+    const noise = () => { // fine monochrome grain (seeded): the network's skin is too clean
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return ((seed >> 8) % 1000) / 1000 - 0.5;
+    };
+    for (let i = 0; i < d.length; i += 4) {
+      const g = noise() * 5;
+      for (let c = 0; c < 3; c++) d[i + c] = b[i + c] + (d[i + c] - b[i + c]) * ENHANCE_MIX + g;
+    }
+    const c = canvasOf(sr), blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.95));
+    await openFile(new File([blob], `${name}_hd.jpg`, { type: "image/jpeg" }));
+    toast(`Готово · ${sr.width}×${sr.height}`, 0, before ? [["Вернуть исходное", () => { hideToast(); openFile(before); }]] : []);
+  } catch (err) {
+    console.error(err);
+    toast("Не удалось улучшить фото");
+  }
+  $("busy").hidden = true;
 }
 
 // --- «Пакет фото»: the current edit applied to many photos (core/batch.py on the desktop) ----------
@@ -592,6 +634,7 @@ function kindTool(t, b) {
   b.onclick = () => {
     if (b.dataset.long === "1") return;
     if (t.kind === "auto") return runAuto();
+    if (t.kind === "enhance") return enhancePhoto();
     if (t.kind === "presetSave") return savePreset();
     if (t.kind === "myPreset") return applyPreset(t.preset);
     if (t.kind === "versionSave") {
@@ -1605,6 +1648,7 @@ async function decodeHeic(file) {
 
 async function openFile(file, { restoring = false } = {}) {
   if (!file) return;
+  app.file = file;
   if (!restoring) {
     session.save({ file, name: file.name || "photo", state: null, exporting: false, bgFile: null, bgPid: null, versions: [] });
     app.versions = [];

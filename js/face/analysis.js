@@ -312,6 +312,36 @@ export async function removeFill(full, conf) {
   return { box: [X0 / W, Y0 / H, X1 / W, Y1 / H], w: fw, h: fh, rgb, hole };
 }
 
+// --- «Улучшить качество»: Real-ESRGAN x4 on tiles (a photo of long side `inSide` -> 4x) -----------------
+// Tiles of TILE px with PAD px of context (no seams); the progress goes to onProgress(0..1).
+const TILE = 128, PAD = 8;
+export async function superResolve(small, onProgress = () => {}) { // small: ImageData
+  const w = small.width, h = small.height, W = 4 * w, H = 4 * h, out = new Uint8ClampedArray(W * H * 4);
+  const tiles = [];
+  for (let y = 0; y < h; y += TILE) for (let x = 0; x < w; x += TILE) tiles.push([x, y]);
+  let done = 0;
+  for (const [tx, ty] of tiles) {
+    const x0 = Math.max(0, tx - PAD), y0 = Math.max(0, ty - PAD);
+    const x1 = Math.min(w, tx + TILE + PAD), y1 = Math.min(h, ty + TILE + PAD), tw = x1 - x0, th = y1 - y0, n = tw * th;
+    const data = new Float32Array(3 * n);
+    for (let y = 0; y < th; y++)
+      for (let x = 0; x < tw; x++) {
+        const s = 4 * ((y0 + y) * w + x0 + x), i = y * tw + x;
+        for (let c = 0; c < 3; c++) data[c * n + i] = small.data[s + c] / 255;
+      }
+    const img = (await onnxCall({ model: "esrgan", data, w: tw, h: th }, [data.buffer])).image, N = 16 * n;
+    // keep only the tile's own part (the padding was context)
+    const ox = 4 * (tx - x0), oy = 4 * (ty - y0), cw = 4 * Math.min(TILE, w - tx), ch = 4 * Math.min(TILE, h - ty);
+    for (let y = 0; y < ch; y++)
+      for (let x = 0; x < cw; x++) {
+        const i = (oy + y) * 4 * tw + ox + x, o = 4 * ((4 * ty + y) * W + 4 * tx + x);
+        out[o] = img[i]; out[o + 1] = img[N + i]; out[o + 2] = img[2 * N + i]; out[o + 3] = 255;
+      }
+    onProgress(++done / tiles.length);
+  }
+  return new ImageData(out, W, H);
+}
+
 // «Объект»: the object under a tap (MediaPipe magic touch), confidence plane at 1024 px.
 let interactive = null;
 export async function objectMask(full, x, y) {
