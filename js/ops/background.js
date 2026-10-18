@@ -9,9 +9,9 @@ import { saturate } from "./basic.js";
 export const BG_TAB = "Фон";
 const BLUR_MAX = 0.012, MATTE_RADIUS = 0.004;
 export const REPLACE = ["Нет", "Белый", "Светло-серый", "Бежевый", "Пудровый", "Графит", "Студийный градиент", "Своя картинка"];
-const PLAIN = { "Белый": [0.97, 0.97, 0.97], "Светло-серый": [0.83, 0.84, 0.84], "Бежевый": [0.92, 0.87, 0.8],
+export const PLAIN = { "Белый": [0.97, 0.97, 0.97], "Светло-серый": [0.83, 0.84, 0.84], "Бежевый": [0.92, 0.87, 0.8],
   "Пудровый": [0.93, 0.82, 0.84], "Графит": [0.21, 0.22, 0.24] }; // RGB (desktop tuples are BGR)
-const GRADIENT = [[0.82, 0.8, 0.78], [0.39, 0.37, 0.36]];
+export const GRADIENT = [[0.82, 0.8, 0.78], [0.39, 0.37, 0.36]];
 
 // pictures chosen by the user: id -> {w, h, data (RGB bytes)}; set by the worker
 export const PICTURES = new Map();

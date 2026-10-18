@@ -5,8 +5,10 @@ import { ORDER } from "./ops/index.js";
 import { REGISTRY, Pipeline, defaults, isIdentity } from "./core/pipeline.js";
 import { FILTER_NAMES, filterThumb } from "./ops/filters.js";
 import { LIP_COLORS, BLUSH_COLORS } from "./ops/makeup.js";
-import { HAIR_NAMES } from "./ops/hair.js";
-import { REPLACE } from "./ops/background.js";
+import { HAIR_NAMES, HAIR_COLORS } from "./ops/hair.js";
+import { REPLACE, PLAIN, GRADIENT } from "./ops/background.js";
+import { iconFor } from "./icons.js";
+import { labToRgb } from "./core/img.js";
 import { LOOKS as BASE_LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
 import { MORE_LOOKS, MORE_PRESETS } from "./core/styles.js";
 import { ASPECTS, rectOf } from "./ops/crop.js";
@@ -555,6 +557,65 @@ function filterThumbFor(k) {
   return thumbs.urls.get(k);
 }
 
+// --- tool buttons: volumetric glass tiles (an icon, a colour or a glass orb over the label) ---------
+const css = (rgb) => `rgb(${rgb.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255)).join(",")})`;
+const labCss = (L, a, b) => css([...labToRgb({ w: 1, h: 1, c: 3, data: Float32Array.of(L, a, b) }).data]);
+// the colour a colour choice applies (null: not a colour, or «none»)
+function swatch(t) {
+  const key = `${t.op}.${t.param}`;
+  if (key === "makeup.lip_color") { const [L, a, b] = Object.values(LIP_COLORS)[t.option]; return labCss(L, a, b); }
+  if (key === "makeup.blush_color") { const [a, b] = Object.values(BLUSH_COLORS)[t.option]; return labCss(66, a, b); }
+  if (key === "hair.color" && t.option > 0) { const [L, a, b] = HAIR_COLORS[HAIR_NAMES[t.option]]; return labCss(L, a, b); }
+  if (key === "background.replace") {
+    const n = REPLACE[t.option];
+    if (PLAIN[n]) return css(PLAIN[n]);
+    if (n === "Студийный градиент") return `linear-gradient(160deg, ${css(GRADIENT[0])}, ${css(GRADIENT[1])})`;
+  }
+  return null;
+}
+// looks: an orb hue from the name, kept in the brand's warm range (rose → coral → gold)
+const hueOf = (s) => (310 + ([...s].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 997, 7) % 110)) % 360;
+// long words in narrow tiles: a soft hyphen after a vowel near the middle (browsers on Windows do
+// not hyphenate Russian themselves)
+const VOWEL = /[аеёиоуыэюяaeiouy]/i;
+function softHyphens(word) {
+  if (word.length < 10) return word;
+  let best = -1;
+  for (let i = 3; i <= word.length - 4; i++)
+    if (VOWEL.test(word[i - 1]) && !VOWEL.test(word[i]) && (best < 0 || Math.abs(i - word.length / 2) < Math.abs(best - word.length / 2))) best = i;
+  return best < 0 ? word : word.slice(0, best) + "\u00AD" + word.slice(best);
+}
+const plainLabel = (s) => s.replace(/^[✦＋↺⟳]\s*/, "").split(" ").map(softHyphens).join(" ");
+
+function decorate(b, t, label) {
+  if (b.classList.contains("thumb") || b.classList.contains("version")) return;
+  const on = b.classList.contains("on");
+  b.classList.add("tile");
+  const ico = document.createElement("span"), lbl = document.createElement("span"), dot = document.createElement("span");
+  ico.className = "ico";
+  lbl.className = "lbl";
+  dot.className = "dot";
+  lbl.textContent = plainLabel(label);
+  const color = t.op && swatch(t);
+  if (color) {
+    ico.classList.add("swatch");
+    ico.style.background = color;
+  } else if (t.kind === "look") {
+    ico.classList.add("orb");
+    ico.style.setProperty("--h", hueOf(t.name));
+  } else if (t.kind === "aspect" && /\d/.test(t.name)) {
+    ico.classList.add("text");
+    ico.textContent = t.name;
+  } else if (t.kind === "rotate") {
+    ico.innerHTML = iconFor(t);
+    lbl.textContent = "90°";
+  } else ico.innerHTML = iconFor(t);
+  if (t.op === "hair" && t.param === "color" && t.option === 0) ico.innerHTML = iconFor({ kind: "reset" });
+  if (t.op === "background" && t.param === "replace" && !color) ico.innerHTML = iconFor(t.option ? { op: "skin_natural", param: "volume" } : { kind: "reset" });
+  b.replaceChildren(ico, lbl, dot);
+  b.classList.toggle("on", on);
+}
+
 function renderTools() {
   const row = $("tools");
   row.innerHTML = "";
@@ -563,6 +624,7 @@ function renderTools() {
     row.appendChild(b);
     if (t.kind) {
       kindTool(t, b);
+      decorate(b, t, t.label);
       continue;
     }
     const p = paramOf(t), v = values(t.op)[t.param];
@@ -585,13 +647,14 @@ function renderTools() {
       } else app.tool = t;
       renderTools();
     };
+    decorate(b, t, toolLabel(t));
   }
   if (tabChanged()) {
     const b = document.createElement("button");
     b.className = "tool reset-tab";
-    b.textContent = "↺ Сбросить вкладку";
     b.onclick = resetTab;
     row.appendChild(b);
+    decorate(b, { kind: "reset" }, "Сбросить вкладку");
   }
   renderSlider();
 }

@@ -348,3 +348,189 @@ main#stage { touch-action: none; }
 
 /* install as an app (Chrome / Edge on Android, Windows, Mac, Linux), or how to do it in Safari */
 .welcome .install-hint { font-size: 12.5px; margin: 12px 0 0; line-height: 1.4; }
+
+/* ================================================================================================
+   Liquid glass 2 (2026-10-18): volumetric buttons. Every control is a piece of thick glass — frosted
+   body, a bright rim, a specular highlight on top, a darker bottom edge and a soft drop shadow —
+   that presses in when touched. The chosen one is a chocolate lens with an inner glow.
+   ================================================================================================ */
+:root {
+  --g-top: rgba(255, 255, 255, 0.92);
+  --g-bot: rgba(255, 255, 255, 0.42);
+  --g-rim: rgba(255, 255, 255, 0.95);
+  --g-drop: 0 6px 14px rgba(59, 36, 28, 0.13), 0 1.5px 3px rgba(59, 36, 28, 0.10);
+  --g-in: inset 0 1.5px 0 rgba(255, 255, 255, 1), inset 0 -3px 8px rgba(59, 36, 28, 0.07);
+  --lens-1: #5B3A2D;
+  --lens-2: #2E1A13;
+  --lens-text: #F8EFE8;
+  --ico: #3B241C;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --g-top: rgba(255, 255, 255, 0.16);
+    --g-bot: rgba(255, 255, 255, 0.04);
+    --g-rim: rgba(255, 255, 255, 0.22);
+    --g-drop: 0 8px 18px rgba(0, 0, 0, 0.45), 0 1.5px 3px rgba(0, 0, 0, 0.4);
+    --g-in: inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 -3px 8px rgba(0, 0, 0, 0.35);
+    --lens-1: #F6EDE6;
+    --lens-2: #CDB7A8;
+    --lens-text: #2A1B15;
+    --ico: #F1E6DD;
+  }
+}
+
+/* the tile */
+.tools { gap: 10px; padding: 4px 14px 12px; }
+.tool.tile {
+  position: relative; flex-direction: column; justify-content: flex-start; gap: 6px;
+  width: 80px; min-height: 80px; padding: 9px 4px 8px; border-radius: 20px;
+  white-space: normal; text-align: center; font-size: 11px; line-height: 1.15; font-weight: 600;
+  color: var(--text);
+  background: linear-gradient(170deg, var(--g-top), var(--g-bot));
+  border: 1px solid var(--g-rim);
+  box-shadow: var(--g-in), var(--g-drop);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(14px) saturate(1.5);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.2s;
+  overflow: hidden;
+}
+.tool.tile::before { /* specular highlight: a soft oval across the top */
+  content: ""; position: absolute; left: 10%; right: 10%; top: 2px; height: 42%;
+  border-radius: 18px 18px 50% 50%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0));
+  opacity: 0.75; pointer-events: none;
+}
+@media (prefers-color-scheme: dark) { .tool.tile::before { opacity: 0.22; } }
+.tool.tile:active { transform: translateY(1.5px) scale(0.96); box-shadow: var(--g-in), 0 2px 5px rgba(59, 36, 28, 0.12); }
+
+/* the icon well: a small glass lens inside the tile */
+.tool.tile .ico {
+  position: relative; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  background: radial-gradient(120% 120% at 30% 25%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.25) 60%, rgba(59, 36, 28, 0.06));
+  box-shadow: inset 0 -2px 4px rgba(59, 36, 28, 0.10), inset 0 1px 1px rgba(255, 255, 255, 0.9), 0 2px 5px rgba(59, 36, 28, 0.10);
+  color: var(--ico);
+}
+@media (prefers-color-scheme: dark) {
+  .tool.tile .ico {
+    background: radial-gradient(120% 120% at 30% 25%, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.05) 60%, rgba(0, 0, 0, 0.25));
+    box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.18), 0 2px 5px rgba(0, 0, 0, 0.3);
+  }
+}
+.tool.tile .ico svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.tool.tile .ico.text { font-size: 12px; font-weight: 800; letter-spacing: -0.02em; }
+/* colour choices: a glossy bead of the colour itself */
+.tool.tile .ico.swatch { box-shadow: inset 0 -4px 7px rgba(0, 0, 0, 0.22), inset 0 2px 3px rgba(255, 255, 255, 0.55), 0 3px 7px rgba(0, 0, 0, 0.18); }
+.tool.tile .ico.swatch::after {
+  content: ""; position: absolute; left: 22%; top: 12%; width: 45%; height: 32%; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0));
+}
+/* looks: a glass orb in the look's own hue */
+.tool.tile .ico.orb {
+  background: radial-gradient(90% 90% at 32% 28%, #fff 0%, hsl(var(--h) 70% 82%) 28%, hsl(var(--h) 45% 52%) 75%, hsl(var(--h) 40% 34%) 100%);
+  box-shadow: inset 0 -4px 8px rgba(0, 0, 0, 0.25), 0 3px 8px hsla(var(--h), 45%, 40%, 0.35);
+}
+.tool.tile .lbl {
+  position: relative; max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; word-break: normal; overflow-wrap: break-word;
+  -webkit-hyphens: auto; hyphens: auto;
+}
+.tool.tile .dot { position: absolute; top: 7px; right: 8px; width: 7px; height: 7px; opacity: 0; background: var(--accent); }
+.tool.tile.changed .dot { opacity: 1; box-shadow: 0 0 0 2px var(--g-top); }
+
+/* chosen: the chocolate lens with an inner glow */
+.tool.tile.on {
+  color: var(--lens-text); border-color: rgba(255, 255, 255, 0.35);
+  background: radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 55%),
+              linear-gradient(170deg, var(--lens-1), var(--lens-2));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 -4px 10px rgba(0, 0, 0, 0.35),
+              0 8px 18px rgba(46, 26, 19, 0.35), 0 0 0 3px rgba(91, 58, 45, 0.12);
+}
+.tool.tile.on::before { opacity: 0.35; }
+.tool.tile.on .ico:not(.swatch):not(.orb) {
+  color: var(--lens-text);
+  background: radial-gradient(120% 120% at 30% 25%, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.06) 60%, rgba(0, 0, 0, 0.15));
+  box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.35);
+}
+.tool.tile.on .ico.swatch, .tool.tile.on .ico.orb { outline: 2px solid var(--lens-text); outline-offset: 2px; }
+.tool.tile.on .dot { background: var(--lens-text); }
+.tool.tile.accent .ico { color: #B7793F; }
+.tool.tile.accent:not(.on) { border-color: rgba(214, 160, 100, 0.8); }
+
+/* filter thumbnails and versions: the same glass frame */
+.tool.thumb, .tool.version {
+  border-radius: 18px; background: linear-gradient(170deg, var(--g-top), var(--g-bot)); border: 1px solid var(--g-rim);
+  box-shadow: var(--g-in), var(--g-drop); transition: transform 0.12s ease;
+}
+.tool.thumb:active, .tool.version:active { transform: translateY(1.5px) scale(0.96); }
+.tool.thumb.on { background: linear-gradient(170deg, var(--lens-1), var(--lens-2)); color: var(--lens-text); }
+
+/* tabs: a glass rail with a raised pill for the current one */
+.tabs {
+  border-top: 0; margin: 2px 10px 0; padding: 5px; gap: 4px; border-radius: 16px;
+  background: linear-gradient(180deg, rgba(59, 36, 28, 0.06), rgba(59, 36, 28, 0.02));
+  box-shadow: inset 0 1px 3px rgba(59, 36, 28, 0.10), inset 0 -1px 0 rgba(255, 255, 255, 0.6);
+}
+@media (prefers-color-scheme: dark) {
+  .tabs { background: rgba(0, 0, 0, 0.22); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5), inset 0 -1px 0 rgba(255, 255, 255, 0.06); }
+}
+.tab { border-radius: 12px; padding: 8px 12px; transition: background 0.2s, color 0.2s, box-shadow 0.2s; }
+.tab.on {
+  color: var(--accent);
+  background: linear-gradient(170deg, var(--g-top), var(--g-bot));
+  box-shadow: var(--g-in), 0 3px 8px rgba(59, 36, 28, 0.14);
+}
+
+/* slider: a glass bead on a carved groove */
+input[type=range]::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 3px; background: var(--rail);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18), 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+input[type=range]::-webkit-slider-thumb {
+  width: 28px; height: 28px; margin-top: -11px; border: 1px solid rgba(255, 255, 255, 0.95);
+  background: radial-gradient(100% 100% at 35% 25%, #fff 0%, #F3ECE6 45%, #D9CCC2 100%);
+  box-shadow: 0 4px 10px rgba(59, 36, 28, 0.28), inset 0 -2px 4px rgba(59, 36, 28, 0.15), 0 0 0 4px rgba(59, 36, 28, 0.06);
+}
+input[type=range]::-moz-range-thumb {
+  width: 26px; height: 26px; border: 1px solid #fff;
+  background: radial-gradient(100% 100% at 35% 25%, #fff 0%, #F3ECE6 45%, #D9CCC2 100%);
+  box-shadow: 0 4px 10px rgba(59, 36, 28, 0.28);
+}
+.tool-value, .tool-reset {
+  background: linear-gradient(170deg, var(--g-top), var(--g-bot)); border: 1px solid var(--g-rim);
+  box-shadow: var(--g-in), 0 3px 7px rgba(59, 36, 28, 0.10);
+}
+.tool-reset:active, .tool-value:active { transform: scale(0.95); }
+
+/* top bar and photo buttons: glass beads too */
+.bar .icon { border-radius: 14px; transition: transform 0.12s; }
+.bar .icon:not(:disabled):active { transform: scale(0.92); background: linear-gradient(170deg, var(--g-top), var(--g-bot)); box-shadow: var(--g-in); }
+.primary {
+  background: radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.25), rgba(255, 255, 255, 0) 55%),
+              linear-gradient(170deg, var(--lens-1), var(--lens-2));
+  color: var(--lens-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 -3px 8px rgba(0, 0, 0, 0.3), 0 6px 14px rgba(46, 26, 19, 0.3);
+  transition: transform 0.12s;
+}
+.primary:active { transform: translateY(1px) scale(0.97); }
+.secondary {
+  background: linear-gradient(170deg, var(--g-top), var(--g-bot)); border: 1px solid var(--g-rim);
+  box-shadow: var(--g-in), var(--g-drop); transition: transform 0.12s;
+}
+.secondary:active { transform: translateY(1px) scale(0.97); }
+.chip-btn {
+  background: linear-gradient(170deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.55));
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: inset 0 1px 0 #fff, inset 0 -2px 6px rgba(59, 36, 28, 0.08), 0 6px 14px rgba(0, 0, 0, 0.18);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+@media (prefers-color-scheme: dark) {
+  .chip-btn {
+    background: linear-gradient(170deg, rgba(60, 44, 38, 0.85), rgba(30, 21, 18, 0.75)); border-color: rgba(255, 255, 255, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 6px 14px rgba(0, 0, 0, 0.45);
+  }
+}
+.chip-btn.on { background: linear-gradient(170deg, var(--lens-1), var(--lens-2)); color: var(--lens-text); }
+.panel { border-radius: 26px; }
+.toast { border-radius: 16px; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.2); }
+@media (prefers-reduced-motion: reduce) { .tool.tile, .primary, .secondary { transition: none; } }
