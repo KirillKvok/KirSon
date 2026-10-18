@@ -44,6 +44,10 @@ export class Engine {
     this.worker.postMessage({ type: "objectMask", x, y, w: plane.w, h: plane.h, data: buf }, [buf]);
   }
 
+  setObjectFill(x, y, fill) {
+    this.worker.postMessage({ type: "objectFill", x, y, fill });
+  }
+
   setAnalysis(analysis) {
     this.worker.postMessage({ type: "analysis", analysis });
   }

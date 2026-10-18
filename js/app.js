@@ -13,7 +13,7 @@ import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
 import { selectedFaces } from "./ops/faces.js";
 import { objectKey } from "./ops/object.js";
 import { Engine } from "./engine.js";
-import { analyze, objectMask, parseFaces, warmUpParsing } from "./face/analysis.js";
+import { analyze, objectMask, parseFaces, warmUpParsing, removeFill } from "./face/analysis.js";
 import { VERSION } from "./version.js";
 import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
 import * as session from "./session.js";
@@ -97,6 +97,7 @@ const TABS = [
     tools: [
       { kind: "objectPick", label: "Выбрать объект" },
       ...["brightness", "contrast", "saturation", "sharpness"].map((param) => ({ op: "object", param })),
+      { kind: "objectRemove", label: "Удалить объект" },
       { kind: "objectClear", label: "Снять выделение" },
     ],
   },
@@ -470,8 +471,9 @@ function kindTool(t, b) {
     } else if (t.kind === "objectPick") {
       app.objectPick = !app.objectPick;
       if (app.objectPick) toast("Коснитесь предмета или человека на фото", 3000);
-    } else if (t.kind === "objectClear") {
-      Object.assign(app.pipeline.step("object").values, { x: -1, y: -1 });
+    } else if (t.kind === "objectRemove") return removeObject();
+    else if (t.kind === "objectClear") {
+      Object.assign(app.pipeline.step("object").values, { x: -1, y: -1, remove: 0 });
       app.objectPick = false;
       pushHistory();
       requestRender();
@@ -942,7 +944,7 @@ async function pickObject(x, y) {
     const conf = await objectMask(app.original, x, y);
     objectConfs.set(objectKey(x, y), conf);
     engine.setObjectMask(x, y, conf);
-    Object.assign(app.pipeline.step("object").values, { x, y });
+    Object.assign(app.pipeline.step("object").values, { x, y, remove: 0 });
     pushHistory();
     renderTools();
     requestRender();
@@ -955,11 +957,55 @@ async function pickObject(x, y) {
   $("busy").hidden = true;
 }
 
+// «Удалить объект»: only by this button, after the outline was shown (magic touch sometimes takes
+// more than meant). The fill is made once per object and kept.
+const objectFills = new Map();
+async function fillFor(x, y) {
+  const key = objectKey(x, y);
+  if (!objectFills.has(key)) {
+    let conf = objectConfs.get(key);
+    if (!conf) {
+      conf = await objectMask(app.original, x, y);
+      objectConfs.set(key, conf);
+    }
+    const fill = await removeFill(app.original, conf);
+    if (!fill) throw new Error("empty object");
+    objectFills.set(key, fill);
+    engine.setObjectFill(x, y, fill);
+  }
+  return objectFills.get(key);
+}
+
+async function removeObject() {
+  const v = app.pipeline.step("object").values;
+  if (!(v.x >= 0)) return toast("Сначала выберите объект на фото", 2500);
+  if (v.remove >= 0.5) return toast("Объект уже удалён — отменить можно стрелкой назад", 2500);
+  const [x, y] = [v.x, v.y];
+  $("busy").hidden = false;
+  toast("Удаляю объект…", 0);
+  try {
+    await fillFor(x, y);
+    const o = app.pipeline.step("object").values;
+    if (o.x === x && o.y === y) {
+      o.remove = 1;
+      pushHistory();
+      renderTools();
+      requestRender();
+      drawOverlay();
+    }
+    toast("Объект удалён", 2000);
+  } catch (err) {
+    console.error(err);
+    toast("Не удалось удалить объект");
+  }
+  $("busy").hidden = true;
+}
+
 // outline of the selected object (cached per selection)
 let outlineCache = { key: "", canvas: null };
 function drawObjectOutline(g, W, H) {
   const v = app.pipeline.step("object").values, key = objectKey(v.x ?? -1, v.y ?? -1), conf = objectConfs.get(key);
-  if (!conf || !(v.x >= 0)) return;
+  if (!conf || !(v.x >= 0) || v.remove >= 0.5) return; // removed: nothing to outline
   if (outlineCache.key !== key) {
     const c = document.createElement("canvas");
     c.width = conf.w;
@@ -1237,8 +1283,10 @@ async function openFile(file, { restoring = false } = {}) {
     Object.assign(app.pipeline.step("crop").values, { rot90: 0, flip: 0, angle: 0, x0: 0, y0: 0, x1: 1, y1: 1 });
     app.pipeline.step("face_select").values.faces = [];
     app.facePick = false;
-    Object.assign(app.pipeline.step("object").values, { x: -1, y: -1 });
+    Object.assign(app.pipeline.step("object").values, { x: -1, y: -1, remove: 0 });
     app.objectPick = false;
+    objectConfs.clear(); // tap points of another photo
+    objectFills.clear();
     $("welcome").hidden = true;
     view.hidden = false;
     $("panel").hidden = false;
@@ -1489,9 +1537,10 @@ async function restoreSession(s) {
     if (o.x >= 0) {
       const [x, y] = [o.x, o.y];
       const waitAnalysis = async () => { while (!app.analysis) await new Promise((r) => setTimeout(r, 300)); };
-      waitAnalysis().then(() => objectMask(app.original, x, y)).then((conf) => {
+      waitAnalysis().then(() => objectMask(app.original, x, y)).then(async (conf) => {
         objectConfs.set(objectKey(x, y), conf);
         engine.setObjectMask(x, y, conf);
+        if (o.remove >= 0.5) await fillFor(x, y);
         requestRender();
       }).catch(() => {});
     }

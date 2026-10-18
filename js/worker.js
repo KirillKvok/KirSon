@@ -8,7 +8,7 @@ import { PICTURES } from "./ops/background.js";
 import { getMask } from "./face/masks.js";
 import { suggest } from "./core/auto.js";
 import { geometry, frameActive } from "./ops/crop.js";
-import { OBJECT_MASKS, objectKey } from "./ops/object.js";
+import { OBJECT_MASKS, OBJECT_FILLS, objectKey } from "./ops/object.js";
 import * as par from "./core/par.js";
 
 par.start(); // helper threads for the blurs (when the page is cross-origin isolated)
@@ -69,6 +69,8 @@ self.onmessage = (e) => {
       self.postMessage({ type: "auto", id: m.id, values: suggest(img, ctx) });
     } else if (m.type === "objectMask") { // magic-touch mask of a tapped object
       OBJECT_MASKS.set(objectKey(m.x, m.y), { w: m.w, h: m.h, c: 1, data: new Float32Array(m.data) });
+    } else if (m.type === "objectFill") { // the removed object's patch
+      OBJECT_FILLS.set(objectKey(m.x, m.y), m.fill);
     } else if (m.type === "drop") {
       images.delete(m.key);
     } else if (m.type === "render") {

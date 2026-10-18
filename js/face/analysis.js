@@ -207,7 +207,7 @@ export async function analyze(full) {
 }
 
 // --- face parsing (precise lips, brows, skin, hairline) -------------------------------------------
-// BiSeNet in its own worker (face/parse-worker.js) on a full-resolution crop around every face
+// BiSeNet in its own worker (face/onnx-worker.js) on a full-resolution crop around every face
 // (bbox + PARSE_MARGIN of the face width), 512 px: f.parse = class per pixel, f.parseBox =
 // the crop (normalised). Runs after the main analysis: the masks get sharper when it is done.
 export const PARSE_CLASSES = ["background", "skin", "l_brow", "r_brow", "l_eye", "r_eye", "eye_g", "l_ear", "r_ear",
@@ -219,24 +219,25 @@ const parseWaiting = new Map();
 
 function parseWorker() {
   if (!parser) {
-    parser = new Worker(new URL("./parse-worker.js", import.meta.url), { type: "module" });
+    parser = new Worker(new URL("./onnx-worker.js", import.meta.url), { type: "module" });
     parser.onmessage = (e) => {
       const w = parseWaiting.get(e.data.id);
       parseWaiting.delete(e.data.id);
-      if (w) e.data.error ? w.reject(new Error(e.data.error)) : w.resolve(e.data.labels);
+      if (w) e.data.error ? w.reject(new Error(e.data.error)) : w.resolve(e.data);
     };
     parser.onerror = (e) => { for (const w of parseWaiting.values()) w.reject(new Error(e.message || "parse worker")); parseWaiting.clear(); };
   }
   return parser;
 }
-function parseCall(data) {
+function onnxCall(msg, transfer = []) {
   const id = ++parseId;
   return new Promise((resolve, reject) => {
     parseWaiting.set(id, { resolve, reject });
-    parseWorker().postMessage({ id, data }, data ? [data.buffer] : []);
+    parseWorker().postMessage({ ...msg, id }, transfer);
   });
 }
-export const warmUpParsing = () => parseCall(null).catch(() => {}); // loads the model in the background
+const parseCall = async (data) => (await onnxCall({ model: "parse", data }, [data.buffer])).labels;
+export const warmUpParsing = () => onnxCall({ model: "parse" }).catch(() => {}); // loads the model in the background
 
 // adds parse / parseBox to every face; false if parsing is not available here
 export async function parseFaces(full, faces) {
@@ -256,6 +257,59 @@ export async function parseFaces(full, faces) {
     f.parse = await parseCall(x);
     f.parseBox = [X0 / W, Y0 / H, X1 / W, Y1 / H];
   }
+}
+
+// --- object removal (MI-GAN) -------------------------------------------------------------------------
+// As kirson/core/objects.remove_object: the object (grown a little, to take its soft edge and
+// contact shadow) in a square crop with ~1x its size of context, scaled to 512 px; the filled crop
+// comes back as a patch in normalised photo coordinates (the same on the preview and the export):
+// {box: [x0, y0, x1, y1], w, h, rgb: Uint8Array(w*h*3), hole: Float32Array(w*h)}.
+const FILL_SIDE = 512;
+export async function removeFill(full, conf) {
+  const W = full.width, H = full.height, cw = conf.w, ch = conf.h;
+  let x0 = cw, y0 = ch, x1 = -1, y1 = -1;
+  for (let y = 0; y < ch; y++)
+    for (let x = 0; x < cw; x++)
+      if (conf.data[y * cw + x] > 0.5) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  if (x1 < 0) return null;
+  const grow = Math.max(3, Math.max(W, H) * 0.006); // in photo pixels
+  const sx = W / cw, sy = H / ch;
+  const bx0 = x0 * sx - grow, by0 = y0 * sy - grow, bx1 = (x1 + 1) * sx + grow, by1 = (y1 + 1) * sy + grow;
+  let side = Math.round(Math.max(bx1 - bx0, by1 - by0) * 2) + 16;
+  side = Math.min(side, Math.max(W, H));
+  const cx = (bx0 + bx1) / 2, cy = (by0 + by1) / 2;
+  const X0 = Math.round(Math.min(Math.max(0, cx - side / 2), Math.max(0, W - side)));
+  const Y0 = Math.round(Math.min(Math.max(0, cy - side / 2), Math.max(0, H - side)));
+  const X1 = Math.min(W, X0 + side), Y1 = Math.min(H, Y0 + side);
+  // the crop keeps its proportions (at the photo's edges it is not square): long side FILL_SIDE
+  const k = FILL_SIDE / Math.max(X1 - X0, Y1 - Y0);
+  const fw = Math.max(8, Math.round((X1 - X0) * k)), fh = Math.max(8, Math.round((Y1 - Y0) * k)), n = fw * fh;
+  const px = canvasOf(full, fw, fh, X0, Y0, X1 - X0, Y1 - Y0).getContext("2d").getImageData(0, 0, fw, fh).data;
+  // the hole: the object mask (nearest), grown by `grow` (+1 px like the desktop)
+  const g = Math.max(1, Math.round(grow * k)) + 1;
+  const hard = new Uint8Array(n);
+  for (let y = 0; y < fh; y++)
+    for (let x = 0; x < fw; x++) {
+      const u = Math.min(cw - 1, Math.floor(((X0 + (x + 0.5) / k) / W) * cw));
+      const v = Math.min(ch - 1, Math.floor(((Y0 + (y + 0.5) / k) / H) * ch));
+      hard[y * fw + x] = conf.data[v * cw + u] > 0.5 ? 1 : 0;
+    }
+  const hole = new Float32Array(n);
+  for (let y = 0; y < fh; y++) // square dilation (the crop is small)
+    for (let x = 0; x < fw; x++) {
+      if (!hard[y * fw + x]) continue;
+      for (let yy = Math.max(0, y - g); yy <= Math.min(fh - 1, y + g); yy++)
+        hole.fill(1, yy * fw + Math.max(0, x - g), yy * fw + Math.min(fw - 1, x + g) + 1);
+    }
+  const image = new Uint8Array(3 * n), mask = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    for (let c = 0; c < 3; c++) image[c * n + i] = px[4 * i + c];
+    mask[i] = hole[i] ? 0 : 255;
+  }
+  const out = (await onnxCall({ model: "migan", image, mask, w: fw, h: fh }, [image.buffer, mask.buffer])).image;
+  const rgb = new Uint8Array(3 * n);
+  for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) rgb[3 * i + c] = out[c * n + i];
+  return { box: [X0 / W, Y0 / H, X1 / W, Y1 / H], w: fw, h: fh, rgb, hole };
 }
 
 // «Объект»: the object under a tap (MediaPipe magic touch), confidence plane at 1024 px.
