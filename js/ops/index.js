@@ -12,6 +12,7 @@ import "./hair.js";
 import "./background.js";
 import "./crop.js";
 import "./brushes.js";
+import "./faces.js";
 
 export const ORDER = ["face_select", "mask_edit", "heal", "skin", "skin_natural", "skin_tone", "face_light",
   "face_detail", "teeth_eyes", "makeup", "hair", "face_shape", "body", "background", "object", "liquify",

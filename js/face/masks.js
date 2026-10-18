@@ -260,6 +260,21 @@ export const MASKS = {
   contour_light: perFace(contourLight),
 };
 
+// soft region around the given faces, reaching down for long hair; body: the figure under the face
+function nearFaces(w, h, a, body) {
+  const s = Math.min(1, 512 / Math.max(w, h)), sw = Math.max(2, Math.floor(w * s)), sh = Math.max(2, Math.floor(h * s));
+  const c = new Canvas(sw, sh);
+  let fw0 = 10;
+  for (const f of a.faces) {
+    const fw = faceWidth(f, w, h) * s, p = facePx(f, w, h);
+    fw0 = Math.max(fw0, fw);
+    const cx = (p.reduce((t, q) => t + q[0], 0) / p.length) * s, cy = (p.reduce((t, q) => t + q[1], 0) / p.length) * s;
+    if (body) c.poly([[cx - 1.2 * fw, cy - fw], [cx + 1.2 * fw, cy - fw], [cx + 2.2 * fw, sh], [cx - 2.2 * fw, sh]]);
+    else c.ellipse([cx, cy + 0.6 * fw], 1.1 * fw, 2.2 * fw, 0);
+  }
+  return I.resizeLinear(I.gaussian(c.plane(), Math.max(1, 0.25 * fw0)), w, h);
+}
+
 // Mask `name` for `img` (the image the operation receives), cached per size, face choice and
 // mask-brush edits (applied by ops/mask_edit.js when present).
 export function getMask(img, ctx, name) {
@@ -272,6 +287,10 @@ export function getMask(img, ctx, name) {
     let base = ctx.cache.get(baseKey);
     if (!base) {
       base = MASKS[name](img, ctx);
+      if (sel && (name === "hair" || name === "body_skin")) { // the hair / body of the chosen people only
+        const near = nearFaces(img.w, img.h, getAnalysis(ctx), name === "body_skin");
+        base = I.mapPlane(base, (v, i) => v * near.data[i]);
+      }
       ctx.cache.set(baseKey, base);
     }
     const apply = ctx.cache.get("mask_edits_apply");

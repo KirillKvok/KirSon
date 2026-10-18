@@ -10,6 +10,7 @@ import { REPLACE } from "./ops/background.js";
 import { LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
 import { ASPECTS, rectOf } from "./ops/crop.js";
 import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
+import { selectedFaces } from "./ops/faces.js";
 import { Engine } from "./engine.js";
 import { analyze } from "./face/analysis.js";
 import { VERSION } from "./version.js";
@@ -35,11 +36,15 @@ const TABS = [
   },
   {
     name: "Лицо",
-    tools: [["skin", "smooth"], ["skin", "blemish"], ["face_light", "matte"], ["skin_tone", "even"],
+    tools: [
+      ...[["skin", "smooth"], ["skin", "blemish"], ["face_light", "matte"], ["skin_tone", "even"],
       ["skin_tone", "redness"], ["face_detail", "circles"], ["face_detail", "bags"], ["face_detail", "folds"],
       ["face_detail", "wrinkles"], ["face_light", "soften"], ["face_light", "fill"], ["skin_tone", "tan"],
       ["teeth_eyes", "teeth"], ["teeth_eyes", "sclera"], ["teeth_eyes", "iris"], ["skin", "texture"],
       ["skin_natural", "texture"], ["skin_natural", "volume"], ["skin", "body"]].map(([op, param]) => ({ op, param })),
+      { kind: "facePick", label: "Выбрать лицо" },
+      { kind: "faceAll", label: "Все лица" },
+    ],
   },
   {
     name: "Форма",
@@ -211,6 +216,7 @@ function canvasOf(imageData) {
 
 function selectTab(k) {
   const wasFrame = frameTab(), wasBrush = brushTab();
+  app.facePick = false;
   app.tab = k;
   if (frameTab()) resetZoom(); // the frame editor works on the whole, unzoomed photo
   if (wasFrame !== frameTab() || wasBrush !== brushTab()) requestRender(); // whole photo in these tabs
@@ -284,6 +290,22 @@ function kindTool(t, b) {
         app.tool = TABS[app.tab].tools.find((x) => x.kind === "brushSize");
       drawOverlay();
     } else if (t.kind === "brushSize" || t.kind === "brushStrength") app.tool = t;
+    else if (t.kind === "facePick") {
+      const n = app.analysis?.faces.length || 0;
+      if (n < 2) toast(n ? "На фото одно лицо — правки и так только для него" : "Лица ещё ищутся…");
+      else {
+        app.facePick = !app.facePick;
+        if (app.facePick) toast("Коснитесь лица, которое нужно править", 3000);
+        drawOverlay();
+      }
+    } else if (t.kind === "faceAll") {
+      app.pipeline.step("face_select").values.faces = [];
+      app.facePick = false;
+      pushHistory();
+      requestRender();
+      drawOverlay();
+      toast("Правки — для всех лиц", 2000);
+    }
     else if (t.kind === "brushClear") {
       app.pipeline.step(app.brush.tool).values.strokes = [];
       pushHistory();
@@ -301,6 +323,12 @@ function kindTool(t, b) {
     renderTools();
   };
   if (t.kind === "aspect" && app.aspect === t.name) b.classList.add("on");
+  if (t.kind === "facePick" && app.facePick) b.classList.add("on");
+  if (t.kind === "facePick") {
+    const sel = selectedFaces(app.pipeline.step("face_select").values);
+    if (sel.length) b.innerHTML = `<span class="dot"></span>Лица: ${sel.map((i) => i + 1).join(", ")}`;
+    b.classList.toggle("changed", sel.length > 0);
+  }
   if (t.kind === "brush" && app.brush.tool === t.tool && app.brush.mode === t.mode) b.classList.add("on");
   if ((t.kind === "brushSize" || t.kind === "brushStrength") && app.tool === t) b.classList.add("on");
 }
@@ -416,7 +444,7 @@ function previewState() {
     const c = st.steps.find((s) => s.op === "crop");
     c.values = { ...c.values, x0: 0, y0: 0, x1: 1, y1: 1 };
   }
-  if (brushTab()) st.steps.find((s) => s.op === "crop").enabled = false; // strokes: whole-photo coordinates
+  if (brushTab() || app.facePick) st.steps.find((s) => s.op === "crop").enabled = false; // whole-photo coordinates
   return st;
 }
 
@@ -562,6 +590,11 @@ const pointerEnd = (e) => {
     gesture = null;
     return;
   }
+  if (gesture?.kind === "pan" && !gesture.moved && e.type === "pointerup" && app.facePick) {
+    toggleFaceAt(...toPhoto(e.clientX, e.clientY));
+    gesture = null;
+    return;
+  }
   if (gesture?.kind === "pan" && !gesture.moved && e.type === "pointerup" && !brushTab()) {
     const now = performance.now(); // double tap: zoom in at the point / back to the whole photo
     if (now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
@@ -652,7 +685,66 @@ function cancelStroke() {
 
 // painted mask corrections, tinted by layer, while the «Маски» brushes are selected
 const LAYER_COLORS = ["rgba(230,60,60,0.38)", "rgba(250,200,60,0.38)", "rgba(90,200,90,0.38)", "rgba(60,140,230,0.38)"];
+function toggleFaceAt(x, y) {
+  const faces = app.analysis?.faces || [];
+  let best = -1, bestD = Infinity;
+  faces.forEach((f, i) => {
+    let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+    for (let k = 0; k < f.pts.length; k += 2) {
+      x0 = Math.min(x0, f.pts[k]); x1 = Math.max(x1, f.pts[k]);
+      y0 = Math.min(y0, f.pts[k + 1]); y1 = Math.max(y1, f.pts[k + 1]);
+    }
+    const mx = 0.3 * (x1 - x0), my = 0.3 * (y1 - y0);
+    if (x < x0 - mx || x > x1 + mx || y < y0 - my || y > y1 + my) return;
+    const d = Math.hypot(x - (x0 + x1) / 2, y - (y0 + y1) / 2);
+    if (d < bestD) { bestD = d; best = i; }
+  });
+  if (best < 0) return toast("Там нет лица — коснитесь лица", 2000);
+  const st = app.pipeline.step("face_select").values, sel = new Set(selectedFaces(st));
+  if (sel.has(best)) sel.delete(best);
+  else sel.add(best);
+  st.faces = [...sel].sort((a, b) => a - b);
+  app.facePick = false;
+  pushHistory();
+  renderTools();
+  requestRender();
+  drawOverlay();
+  toast(st.faces.length ? `Правятся лица: ${st.faces.map((i) => i + 1).join(", ")}` : "Правки — для всех лиц", 2500);
+}
+
+function drawFaces(g, W, H) {
+  const sel = new Set(selectedFaces(app.pipeline.step("face_select").values));
+  (app.analysis?.faces || []).forEach((f, i) => {
+    let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+    for (let k = 0; k < f.pts.length; k += 2) {
+      x0 = Math.min(x0, f.pts[k]); x1 = Math.max(x1, f.pts[k]);
+      y0 = Math.min(y0, f.pts[k + 1]); y1 = Math.max(y1, f.pts[k + 1]);
+    }
+    const t = Math.max(3, W / 300);
+    g.lineWidth = t + 3;
+    g.strokeStyle = "rgba(0,0,0,0.5)";
+    g.strokeRect(x0 * W, y0 * H, (x1 - x0) * W, (y1 - y0) * H);
+    g.lineWidth = t;
+    g.strokeStyle = sel.has(i) ? "#F3C24A" : "#fff";
+    g.strokeRect(x0 * W, y0 * H, (x1 - x0) * W, (y1 - y0) * H);
+    g.fillStyle = sel.has(i) ? "#F3C24A" : "#fff";
+    g.font = `bold ${Math.round(W / 22)}px sans-serif`;
+    g.fillText(String(i + 1), x0 * W + t * 2, y0 * H + W / 20);
+  });
+}
+
 function drawOverlay() {
+  if (app.facePick && !view.hidden) { // frames of the faces to choose from
+    overlay.hidden = false;
+    overlay.width = view.width;
+    overlay.height = view.height;
+    Object.assign(overlay.style, { width: view.style.width, height: view.style.height,
+      left: `${view.offsetLeft}px`, top: `${view.offsetTop}px` });
+    const g = overlay.getContext("2d");
+    g.clearRect(0, 0, overlay.width, overlay.height);
+    drawFaces(g, overlay.width, overlay.height);
+    return;
+  }
   const on = brushTab() && app.brush.tool === "mask_edit" && !view.hidden;
   overlay.hidden = !on;
   if (!on) return;
@@ -833,6 +925,8 @@ async function openFile(file) {
       app.detailWidth = dw;
     }
     Object.assign(app.pipeline.step("crop").values, { rot90: 0, flip: 0, angle: 0, x0: 0, y0: 0, x1: 1, y1: 1 });
+    app.pipeline.step("face_select").values.faces = [];
+    app.facePick = false;
     $("welcome").hidden = true;
     view.hidden = false;
     $("panel").hidden = false;
