@@ -17,6 +17,9 @@ export const EXTRA = {
   remove: { label: "удаления объектов", files: ["models/migan.onnx"].map(u) },
   enhance: { label: "улучшения качества", files: ["models/esrgan_x4v3.onnx"].map(u) },
   heic: { label: "фото HEIC", files: ["vendor/libheif/libheif-bundle.mjs"].map(u) },
+  // ONNX Runtime for the graphics card (WebGPU): fetched quietly, used from the next start
+  gpu: { label: "видеокарты", files: ["vendor/ort/ort.webgpu.min.mjs", "vendor/ort/ort-wasm-simd-threaded.jsep.mjs",
+    "vendor/ort/ort-wasm-simd-threaded.jsep.wasm"].map(u) },
 };
 
 async function cache() {

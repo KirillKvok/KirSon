@@ -217,9 +217,14 @@ const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
 let parser = null, parseId = 0;
 const parseWaiting = new Map();
 
+// the graphics card (WebGPU) for the ONNX models: decided before the worker starts (its runtime differs)
+let gpu = false;
+export function setGpu(on) { if (!parser) gpu = !!on; }
+export const onnxInfo = () => onnxCall({ model: "info" });
+
 function parseWorker() {
   if (!parser) {
-    parser = new Worker(new URL("./onnx-worker.js", import.meta.url), { type: "module" });
+    parser = new Worker(new URL(`./onnx-worker.js${gpu ? "?gpu=1" : ""}`, import.meta.url), { type: "module" });
     parser.onmessage = (e) => {
       const w = parseWaiting.get(e.data.id);
       parseWaiting.delete(e.data.id);
@@ -314,8 +319,10 @@ export async function removeFill(full, conf) {
 
 // --- «Улучшить качество»: Real-ESRGAN x4 on tiles (a photo of long side `inSide` -> 4x) -----------------
 // Tiles of TILE px with PAD px of context (no seams); the progress goes to onProgress(0..1).
-const TILE = 128, PAD = 8;
+const PAD = 8; // tiles: small on the processor (memory), big on the graphics card (fewer round trips)
+const tileSide = () => (gpu ? 384 : 128);
 export async function superResolve(small, onProgress = () => {}) { // small: ImageData
+  const TILE = tileSide();
   const w = small.width, h = small.height, W = 4 * w, H = 4 * h, out = new Uint8ClampedArray(W * H * 4);
   const tiles = [];
   for (let y = 0; y < h; y += TILE) for (let x = 0; x < w; x += TILE) tiles.push([x, y]);

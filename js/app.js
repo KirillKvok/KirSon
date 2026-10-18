@@ -16,7 +16,7 @@ import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
 import { selectedFaces } from "./ops/faces.js";
 import { objectKey } from "./ops/object.js";
 import { Engine } from "./engine.js";
-import { analyze, objectMask, parseFaces, warmUpParsing, removeFill, superResolve, faceTracker } from "./face/analysis.js";
+import { analyze, objectMask, parseFaces, warmUpParsing, removeFill, superResolve, faceTracker, setGpu, onnxInfo } from "./face/analysis.js";
 import { openCoach } from "./coach.js";
 import * as assets from "./assets.js";
 import { VERSION } from "./version.js";
@@ -2107,7 +2107,20 @@ async function prepareCore() {
     box.hidden = true; // offline or blocked: the networks load as they are needed
   }
 }
-prepareCore().finally(() => setTimeout(warmUpParsing, 500));
+// the graphics card for the ONNX models (2–5x faster where WebGPU works): its runtime (22 MB) is fetched
+// quietly after the core and used from the next start; on localhost straight away (files on the server)
+async function prepareGpu() {
+  if (!navigator.gpu) return;
+  try { if (localStorage.getItem("kirson-nogpu")) return; } catch { /* private mode */ } // a switch for debugging
+  try {
+    if (!(await navigator.gpu.requestAdapter())) return;
+    const dev = ["localhost", "127.0.0.1"].includes(location.hostname);
+    const todo = dev ? [] : await assets.missing(assets.EXTRA.gpu.files);
+    if (!todo.length) return setGpu(true);
+    assets.download(todo).catch(() => {}); // next start
+  } catch { /* no WebGPU here */ }
+}
+prepareCore().then(prepareGpu).finally(() => setTimeout(warmUpParsing, 500));
 
 // a feature's own network (object selection, removal, enhancement, HEIC) the first time it is used
 async function ensureExtra(name) {
@@ -2190,5 +2203,5 @@ if ("serviceWorker" in navigator && !["localhost", "127.0.0.1"].includes(locatio
     }
   });
 }
-window.kirson = { app, engine, openFile, saved: () => savedFile, batch: () => batchFiles }; // for scripted checks
+window.kirson = { app, engine, openFile, saved: () => savedFile, batch: () => batchFiles, onnxInfo }; // for scripted checks
 if (["localhost", "127.0.0.1"].includes(location.hostname)) import("./dev.js").then((m) => (window.kirson.dev = m));
