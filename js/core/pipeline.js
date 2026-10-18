@@ -77,7 +77,9 @@ export class Pipeline {
       const hit = cache.get(i);
       if (hit && hit.sig === sig) out = hit.out;
       else {
+        const t0 = performance.now();
         out = op.apply(out, values, ctx);
+        (ctx.timings ||= {})[step.op] = Math.round(performance.now() - t0);
         if (!ctx.noCache) cache.set(i, { sig, out });
       }
     });

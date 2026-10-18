@@ -80,3 +80,16 @@ export async function masks(name, names, { tile = 400 } = {}) {
   const blob = await new Promise((r) => out.toBlob(r, "image/jpeg", 0.9));
   return (await fetch(`/__save?name=${encodeURIComponent(name)}`, { method: "POST", body: blob })).text();
 }
+
+// per-step timings of a full edit on a fresh image (cold step cache, masks cached after the 1st run)
+export async function bench(vals, key = "preview", runs = 2) {
+  const { app, engine } = K();
+  const out = [];
+  for (let r = 0; r < runs; r++) {
+    const st = Pipeline.fromJSON(app.pipeline.toJSON());
+    for (const [op, v] of Object.entries(vals)) Object.assign(st.step(op).values, v, { _bench: r + Math.random() });
+    const res = await engine.render(key, st.toJSON());
+    out.push({ ms: Math.round(res.ms), threads: res.threads, ...res.timings });
+  }
+  return out;
+}

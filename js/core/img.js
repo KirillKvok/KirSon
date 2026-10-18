@@ -6,6 +6,8 @@
 // Planes:  {w, h, c: 1, data: Float32Array} single channel
 // Channel order is RGB (the desktop code is BGR: colour tuples are reordered when ported).
 
+import * as par from "./par.js";
+
 export const LUMA = [0.2126, 0.7152, 0.0722]; // Rec.709, RGB order
 
 export function fimg(w, h, c = 1, data = null) {
@@ -42,47 +44,16 @@ export function clamp01(f) {
 
 // --- blurs ------------------------------------------------------------------------------
 
-// One box pass of radius r along rows (horizontal) for a c-channel interleaved buffer.
-// Edge pixels are replicated. O(n), independent of r.
-function boxH(src, dst, w, h, c, r) {
-  const norm = 1 / (2 * r + 1);
-  for (let y = 0; y < h; y++) {
-    const row = y * w * c;
-    for (let ch = 0; ch < c; ch++) {
-      let acc = 0;
-      for (let k = -r; k <= r; k++) acc += src[row + Math.min(w - 1, Math.max(0, k)) * c + ch];
-      for (let x = 0; x < w; x++) {
-        dst[row + x * c + ch] = acc * norm;
-        const add = Math.min(w - 1, x + r + 1), sub = Math.max(0, x - r);
-        acc += src[row + add * c + ch] - src[row + sub * c + ch];
-      }
-    }
-  }
-}
-
-function boxV(src, dst, w, h, c, r) {
-  // row by row with a running sum per column: memory is read sequentially (cache friendly)
-  const norm = 1 / (2 * r + 1), stride = w * c, acc = new Float64Array(stride);
-  for (let k = -r; k <= r; k++) {
-    const o = Math.min(h - 1, Math.max(0, k)) * stride;
-    for (let j = 0; j < stride; j++) acc[j] += src[o + j];
-  }
-  for (let y = 0; y < h; y++) {
-    const o = y * stride, add = Math.min(h - 1, y + r + 1) * stride, sub = Math.max(0, y - r) * stride;
-    for (let j = 0; j < stride; j++) {
-      dst[o + j] = acc[j] * norm;
-      acc[j] += src[add + j] - src[sub + j];
-    }
-  }
-}
+// Separable passes (core/kernels.js), shared out between processor cores when possible (par.js).
+const pass = (kind, src, dst, w, h, c, r, k = null) => par.rows(kind, { src, dst, w, h, c, r, k }, h);
 
 // Box filter of size (2r+1)^2, like cv2.boxFilter (normalised).
 export function boxBlur(f, r) {
   r = Math.max(0, Math.round(r));
   if (r === 0) return clone(f);
-  const tmp = new Float32Array(f.data.length), out = new Float32Array(f.data.length);
-  boxH(f.data, tmp, f.w, f.h, f.c, r);
-  boxV(tmp, out, f.w, f.h, f.c, r);
+  const tmp = par.shared(f.data.length), out = par.shared(f.data.length);
+  pass("boxH", par.sharedCopy(f.data), tmp, f.w, f.h, f.c, r);
+  pass("boxV", tmp, out, f.w, f.h, f.c, r);
   return fimg(f.w, f.h, f.c, out);
 }
 
@@ -93,41 +64,6 @@ function gaussKernel(sigma) {
   for (let i = -r; i <= r; i++) s += k[i + r] = Math.exp(-(i * i) / (2 * sigma * sigma));
   for (let i = 0; i < k.length; i++) k[i] /= s;
   return { k, r };
-}
-
-function convH(src, dst, w, h, c, k, r) {
-  // each row (one channel at a time) is copied into a reflect-101 padded buffer, so the
-  // inner loop has no edge tests
-  const pad = new Float32Array(w + 2 * r), n = k.length;
-  for (let y = 0; y < h; y++) {
-    const row = y * w * c;
-    for (let ch = 0; ch < c; ch++) {
-      for (let x = 0; x < w; x++) pad[x + r] = src[row + x * c + ch];
-      for (let i = 1; i <= r; i++) {
-        pad[r - i] = pad[r + Math.min(i, w - 1)];
-        pad[r + w - 1 + i] = pad[r + w - 1 - Math.min(i, w - 1)];
-      }
-      for (let x = 0; x < w; x++) {
-        let acc = 0;
-        for (let i = 0; i < n; i++) acc += k[i] * pad[x + i];
-        dst[row + x * c + ch] = acc;
-      }
-    }
-  }
-}
-
-function convV(src, dst, w, h, c, k, r) {
-  const stride = w * c;
-  for (let y = 0; y < h; y++) {
-    for (let i = -r; i <= r; i++) {
-      let yy = y + i;
-      yy = yy < 0 ? -yy : yy >= h ? 2 * h - 2 - yy : yy;
-      if (yy < 0 || yy >= h) yy = Math.min(h - 1, Math.max(0, yy));
-      const kw = k[i + r], so = yy * stride, dO = y * stride;
-      if (i === -r) for (let j = 0; j < stride; j++) dst[dO + j] = kw * src[so + j];
-      else for (let j = 0; j < stride; j++) dst[dO + j] += kw * src[so + j];
-    }
-  }
 }
 
 // Box sizes whose triple pass approximates a Gaussian of `sigma` (Kovesi).
@@ -149,41 +85,57 @@ export function gaussian(f, sigma) {
   const { w, h, c } = f;
   if (sigma <= 3) {
     const { k, r } = gaussKernel(sigma);
-    const tmp = new Float32Array(f.data.length), out = new Float32Array(f.data.length);
-    convH(f.data, tmp, w, h, c, k, r);
-    convV(tmp, out, w, h, c, k, r);
+    const tmp = par.shared(f.data.length), out = par.shared(f.data.length);
+    pass("convH", par.sharedCopy(f.data), tmp, w, h, c, r, k);
+    pass("convV", tmp, out, w, h, c, r, k);
     return fimg(w, h, c, out);
   }
-  let a = f.data.slice(), b = new Float32Array(a.length);
+  const a = par.shared(f.data.length), b = par.shared(f.data.length);
+  a.set(f.data);
   for (const r of boxesForGauss(sigma)) {
-    boxH(a, b, w, h, c, r);
-    boxV(b, a, w, h, c, r);
+    pass("boxH", a, b, w, h, c, r);
+    pass("boxV", b, a, w, h, c, r);
   }
   return fimg(w, h, c, a);
 }
 
 // --- resize -------------------------------------------------------------------------------
 
-// Area average (shrinking) — like cv2.INTER_AREA for downscaling.
+// Area average (shrinking) — like cv2.INTER_AREA for downscaling. Separable: each output
+// column / row is a weighted sum of the source pixels it covers (taps precomputed).
+function areaTaps(n, nn) {
+  const sc = n / nn, start = new Int32Array(nn), count = new Int32Array(nn), off = new Int32Array(nn), wts = [];
+  for (let o = 0; o < nn; o++) {
+    const a = o * sc, b = Math.min(n, a + sc), i0 = Math.floor(a), i1 = Math.min(n, Math.ceil(b));
+    start[o] = i0; count[o] = i1 - i0; off[o] = wts.length;
+    let tot = 0;
+    for (let i = i0; i < i1; i++) tot += Math.min(b, i + 1) - Math.max(a, i);
+    for (let i = i0; i < i1; i++) wts.push((Math.min(b, i + 1) - Math.max(a, i)) / tot);
+  }
+  return { start, count, off, wts: Float32Array.from(wts) };
+}
+
 export function resizeArea(f, nw, nh) {
-  const { w, h, c } = f, out = new Float32Array(nw * nh * c), d = f.data;
-  const sx = w / nw, sy = h / nh;
-  for (let y = 0; y < nh; y++) {
-    const y0 = y * sy, y1 = y0 + sy;
+  const { w, h, c } = f, d = f.data;
+  const tx = areaTaps(w, nw), ty = areaTaps(h, nh);
+  const tmp = new Float32Array(nw * h * c);
+  for (let y = 0; y < h; y++) {
+    const row = y * w * c, orow = y * nw * c;
     for (let x = 0; x < nw; x++) {
-      const x0 = x * sx, x1 = x0 + sx;
+      const s0 = tx.start[x], cnt = tx.count[x], wo = tx.off[x];
       for (let ch = 0; ch < c; ch++) {
-        let acc = 0, area = 0;
-        for (let yy = Math.floor(y0); yy < Math.min(h, Math.ceil(y1)); yy++) {
-          const wy = Math.min(y1, yy + 1) - Math.max(y0, yy);
-          for (let xx = Math.floor(x0); xx < Math.min(w, Math.ceil(x1)); xx++) {
-            const wx = Math.min(x1, xx + 1) - Math.max(x0, xx);
-            acc += d[(yy * w + xx) * c + ch] * wx * wy;
-            area += wx * wy;
-          }
-        }
-        out[(y * nw + x) * c + ch] = acc / area;
+        let acc = 0;
+        for (let i = 0; i < cnt; i++) acc += d[row + (s0 + i) * c + ch] * tx.wts[wo + i];
+        tmp[orow + x * c + ch] = acc;
       }
+    }
+  }
+  const out = new Float32Array(nw * nh * c), stride = nw * c;
+  for (let y = 0; y < nh; y++) {
+    const s0 = ty.start[y], cnt = ty.count[y], wo = ty.off[y], o = y * stride;
+    for (let i = 0; i < cnt; i++) {
+      const wgt = ty.wts[wo + i], src = (s0 + i) * stride;
+      for (let j = 0; j < stride; j++) out[o + j] += tmp[src + j] * wgt;
     }
   }
   return fimg(nw, nh, c, out);
@@ -322,8 +274,16 @@ for (let i = 0; i < 4096; i++) {
 function toLin(v) {
   return v <= 0 ? 0 : v >= 1 ? 1 : lin[(v * 4095 + 0.5) | 0];
 }
-function fromLin(v) {
+function fromLinExact(v) {
   return v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+}
+// table over sqrt(v) (the curve is steep near black), linear interpolation: error < 1e-5
+const GAM_N = 4096, gam = new Float32Array(GAM_N + 2);
+for (let i = 0; i <= GAM_N + 1; i++) gam[i] = fromLinExact(Math.min(1, (i / GAM_N) ** 2));
+function fromLin(v) {
+  if (v >= 1) return fromLinExact(v);
+  const u = Math.sqrt(v) * GAM_N, i = u | 0;
+  return gam[i] + (gam[i + 1] - gam[i]) * (u - i);
 }
 const Xn = 0.950456, Zn = 1.088754;
 function fLab(t) {

@@ -55,7 +55,7 @@ export class Engine {
   async render(key, state, before = false) {
     const m = await this._call({ type: "render", key, state, before });
     return {
-      image: new ImageData(new Uint8ClampedArray(m.data), m.w, m.h), ms: m.ms,
+      image: new ImageData(new Uint8ClampedArray(m.data), m.w, m.h), ms: m.ms, timings: m.timings, threads: m.threads,
       before: m.before ? new ImageData(new Uint8ClampedArray(m.before), m.bw, m.bh) : null,
     };
   }

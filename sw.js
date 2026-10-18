@@ -64,6 +64,17 @@ self.addEventListener("activate", (e) => {
     .then(() => self.clients.claim()));
 });
 
+// GitHub Pages cannot send headers: the service worker adds cross-origin isolation to every
+// response, which turns on SharedArrayBuffer — processing on several cores (js/core/par.js).
+// Everything the app loads is its own (same origin), so require-corp blocks nothing.
+function isolated(res) {
+  if (!res || res.status === 0 || res.type === "opaque") return res;
+  const headers = new Headers(res.headers);
+  headers.set("Cross-Origin-Opener-Policy", "same-origin");
+  headers.set("Cross-Origin-Embedder-Policy", "require-corp");
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
@@ -71,7 +82,7 @@ self.addEventListener("fetch", (e) => {
     e.respondWith(caches.open(ASSETS).then((c) => c.match(req).then((hit) => hit || fetch(req).then((res) => {
       if (res.ok) c.put(req, res.clone());
       return res;
-    }))));
+    }))).then(isolated));
     return;
   }
   // the app itself: network first (always the newest version online), cache when offline
@@ -81,5 +92,5 @@ self.addEventListener("fetch", (e) => {
       caches.open(VERSION).then((c) => c.put(req, copy));
     }
     return res;
-  }).catch(() => caches.match(req, { ignoreSearch: true })));
+  }).catch(() => caches.match(req, { ignoreSearch: true })).then(isolated));
 });

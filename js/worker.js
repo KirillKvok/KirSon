@@ -9,6 +9,9 @@ import { getMask } from "./face/masks.js";
 import { suggest } from "./core/auto.js";
 import { geometry, frameActive } from "./ops/crop.js";
 import { OBJECT_MASKS, objectKey } from "./ops/object.js";
+import * as par from "./core/par.js";
+
+par.start(); // helper threads for the blurs (when the page is cross-origin isolated)
 
 const images = new Map(); // key -> {img, ctx}
 let analysis = null; // the photo's face / person analysis (normalised), shared by all sizes
@@ -72,9 +75,10 @@ self.onmessage = (e) => {
       const entry = images.get(m.key);
       if (!entry) throw new Error(`no image ${m.key}`);
       const t = performance.now();
+      entry.ctx.timings = {};
       const out = Pipeline.fromJSON(m.state).run(entry.img, entry.ctx);
       const rgba = rgbToRgba(out.data, out.w, out.h);
-      const msg = { type: "result", id: m.id, w: out.w, h: out.h, data: rgba.buffer, ms: performance.now() - t };
+      const msg = { type: "result", id: m.id, w: out.w, h: out.h, data: rgba.buffer, ms: performance.now() - t, timings: entry.ctx.timings, threads: par.threads() };
       const transfer = [rgba.buffer];
       const frame = m.state.steps.find((s) => s.op === "crop");
       const framed = frame && frame.enabled !== false && frameActive({ ...frame.values });

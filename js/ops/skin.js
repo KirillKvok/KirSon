@@ -20,9 +20,9 @@ export function blemishMask(low, skin, fw) {
     L.data[i] = clip(Math.floor(lab.data[3 * i] * 2.55), 0, 255);
     a4.data[i] = clip(Math.floor(lab.data[3 * i + 1] * 4 + 64), 0, 255);
   }
-  const Lmed = median255(L, r), amed = median255(a4, r);
   const coreR = Math.max(1, Math.round(fw * 0.03));
   const core = erode(I.mapPlane(skin, (v) => (v > 0.8 ? 1 : 0)), coreR);
+  const Lmed = median255(L, r, core), amed = median255(a4, r, core); // spots are looked for only in the core
   const score = I.fimg(w, h, 1);
   for (let i = 0; i < n; i++) {
     const dark = (Lmed.data[i] - L.data[i]) / 255, red = (a4.data[i] - amed.data[i]) / 4;

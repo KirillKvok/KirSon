@@ -72,18 +72,29 @@ export class Canvas {
 
 // --- morphology (square windows: close enough to the desktop's ellipses for soft masks) -------
 
+// Running max / min over a window of 2r+1 along rows or columns (van Herk / Gil-Werman:
+// prefix and suffix extremes in blocks of 2r+1, three comparisons per pixel whatever r is).
+// Outside the image the window is cut (edge pixels do not spread beyond themselves).
 function runExtreme(src, dst, w, h, r, isMax, horizontal) {
   const n = horizontal ? w : h, lines = horizontal ? h : w;
   const step = horizontal ? 1 : w, lineStep = horizontal ? w : 1;
-  const buf = new Float32Array(n);
+  const k = 2 * r + 1, m = n + 2 * r, sg = isMax ? 1 : -1; // min = -max(-x)
+  const buf = new Float32Array(m), g = new Float32Array(m), hh = new Float32Array(m);
   for (let l = 0; l < lines; l++) {
     const o = l * lineStep;
-    for (let i = 0; i < n; i++) buf[i] = src[o + i * step];
+    buf.fill(-Infinity);
+    for (let i = 0; i < n; i++) buf[i + r] = sg * src[o + i * step];
+    for (let b0 = 0; b0 < m; b0 += k) { // prefix / suffix maxima within each block
+      const b1 = Math.min(m, b0 + k);
+      let v = (g[b0] = buf[b0]);
+      for (let i = b0 + 1; i < b1; i++) g[i] = v = v > buf[i] ? v : buf[i];
+      v = hh[b1 - 1] = buf[b1 - 1];
+      for (let i = b1 - 2; i >= b0; i--) hh[i] = v = v > buf[i] ? v : buf[i];
+    }
+    // window [i, i + 2r] in padded coordinates = output pixel i
     for (let i = 0; i < n; i++) {
-      let v = buf[i];
-      const a = Math.max(0, i - r), b = Math.min(n - 1, i + r);
-      for (let j = a; j <= b; j++) v = isMax ? Math.max(v, buf[j]) : Math.min(v, buf[j]);
-      dst[o + i * step] = v;
+      const a = hh[i], c = g[i + 2 * r];
+      dst[o + i * step] = sg * (a > c ? a : c);
     }
   }
 }
@@ -101,27 +112,36 @@ export const dilate = (p, r) => extreme(p, r, true);
 export const erode = (p, r) => extreme(p, r, false);
 
 // Median of a 0..255 plane over a (2r+1)^2 window (Huang's sliding histogram).
-export function median255(p, r) {
+// only: optional plane — the median is needed only where only > 0 (elsewhere the output is 0)
+export function median255(p, r, only = null) {
   const { w, h } = p, src = new Uint8Array(w * h), out = fimg(w, h, 1);
   for (let i = 0; i < w * h; i++) src[i] = Math.max(0, Math.min(255, Math.round(p.data[i])));
   const hist = new Int32Array(256);
   for (let y = 0; y < h; y++) {
+    let xs = 0, xe = w - 1;
+    if (only) {
+      const row = y * w;
+      while (xs < w && !(only.data[row + xs] > 0)) xs++;
+      while (xe >= xs && !(only.data[row + xe] > 0)) xe--;
+      if (xs > xe) continue;
+    }
     hist.fill(0);
-    const ys = Math.max(0, y - r), ye = Math.min(h - 1, y + r);
-    let count = 0;
+    const ys = Math.max(0, y - r), ye = Math.min(h - 1, y + r), col = ye - ys + 1;
+    let count = 0, m = 0, lt = 0; // running median m; lt = number of values below m
     const add = (x, s) => {
       if (x < 0 || x >= w) return;
-      for (let yy = ys; yy <= ye; yy++) hist[src[yy * w + x]] += s;
-      count += s * (ye - ys + 1);
-    };
-    for (let x = -r; x <= r; x++) add(x, 1);
-    for (let x = 0; x < w; x++) {
-      const half = count >> 1;
-      let acc = 0, m = 0;
-      for (; m < 256; m++) {
-        acc += hist[m];
-        if (acc > half) break;
+      for (let yy = ys; yy <= ye; yy++) {
+        const v = src[yy * w + x];
+        hist[v] += s;
+        if (v < m) lt += s;
       }
+      count += s * col;
+    };
+    for (let x = xs - r; x <= xs + r; x++) add(x, 1);
+    for (let x = xs; x <= xe; x++) {
+      const half = count >> 1; // median: the smallest m with (values <= m) > half
+      while (m > 0 && lt > half) lt -= hist[--m];
+      while (m < 255 && lt + hist[m] <= half) lt += hist[m++];
       out.data[y * w + x] = m;
       add(x - r, -1);
       add(x + r + 1, 1);
