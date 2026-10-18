@@ -641,3 +641,13 @@ input[type=range]::-moz-range-thumb {
 @keyframes tipIn { from { opacity: 0; transform: translate(-50%, 8px); } }
 @media (prefers-reduced-motion: reduce) { .tip { animation: none; } }
 .secondary.big .newbadge { top: -7px; left: auto; right: 14px; transform: none; font-size: 10px; padding: 2px 8px; }
+
+/* a shared preset: the QR code and the share buttons */
+.share-sheet { position: fixed; inset: 0; z-index: 46; display: grid; place-items: center; background: rgba(0, 0, 0, 0.35); padding: 16px; }
+.share-card { width: min(340px, 100%); border-radius: 24px; padding: 20px 18px 16px; text-align: center; }
+.share-card b { font-size: 17px; }
+.share-card p { margin: 6px 0 12px; font-size: 13px; color: var(--muted); line-height: 1.4; }
+.share-qr { background: #fff; border-radius: 16px; padding: 10px; margin: 0 auto 14px; width: min(240px, 70vw); }
+.share-qr svg { display: block; width: 100%; height: auto; }
+.share-actions { display: grid; gap: 8px; }
+.share-actions button { border-radius: 14px; padding: 11px; font-size: 15px; }

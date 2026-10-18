@@ -20,6 +20,7 @@ import { Engine } from "./engine.js";
 import { analyze, objectMask, parseFaces, warmUpParsing, removeFill, superResolve, faceTracker, setGpu, onnxInfo } from "./face/analysis.js";
 import { openCoach } from "./coach.js";
 import * as assets from "./assets.js";
+import { showShare, presetFromAddress } from "./share.js";
 import { VERSION } from "./version.js";
 import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
 import * as session from "./session.js";
@@ -353,6 +354,27 @@ function applyPreset(p) {
   requestRender();
 }
 
+// a long press on my preset: share it (a link / QR code) or delete it
+function presetMenu(p) {
+  toast(`Пресет «${p.name}»`, 0, [["Поделиться", () => { hideToast(); showShare(p, toast); }],
+    ["Удалить", () => deletePreset(p)], ["Отмена", hideToast]]);
+}
+
+// opened with a shared preset's link: add it to «Мои»
+async function acceptSharedPreset() {
+  const p = await presetFromAddress();
+  if (!p) return false;
+  toast(`Вам прислали пресет «${p.name}». Добавить в «Мои»?`, 0, [["Добавить", () => {
+    const list = myPresets();
+    let name = p.name;
+    for (let i = 2; list.some((x) => x.name === name); i++) name = `${p.name} (${i})`;
+    list.push({ name, values: p.values });
+    if (storePresets(list)) toast(`Пресет «${name}» добавлен — он во вкладке «Мои»`, 3000);
+    if (mineTab()) renderTools();
+  }], ["Не надо", hideToast]]);
+  return true;
+}
+
 function deletePreset(p) {
   toast(`Удалить пресет «${p.name}»?`, 0, [["Удалить", () => {
     storePresets(myPresets().filter((x) => x.name !== p.name));
@@ -671,7 +693,7 @@ function kindTool(t, b) {
     b.lastChild.textContent = t.label; // the user's own text
   }
   if (t.kind === "version" || t.kind === "myPreset") {
-    onLongPress(b, () => (t.kind === "version" ? deleteVersion(t.version) : deletePreset(t.preset)));
+    onLongPress(b, () => (t.kind === "version" ? deleteVersion(t.version) : presetMenu(t.preset)));
   }
   b.onclick = () => {
     if (b.dataset.long === "1") return;
@@ -843,7 +865,7 @@ const TIPS = {
   batch: "Настройте одно фото — пакет применит те же правки к любому количеству снимков.",
   videoEdit: "Ретушь видео до 15 секунд с этими правками — звук сохраняется.",
   enhance: "Нейросеть дорисует детали маленьким и размытым фото и увеличит их.",
-  presetSave: "Сохраните правки как свой пресет — он работает с любым фото.",
+  presetSave: "Сохраните правки как свой пресет — он работает с любым фото. Удерживайте пресет, чтобы поделиться им.",
   objectRemove: "Нейросеть уберёт выделенный предмет и дорисует фон.",
   "hair.thick": "Затягивает просветы и пробор — волосы выглядят гуще.",
   "relight.amount": "Мягкий студийный свет на лицо — направление выбирается кнопками «Свет: …».",
@@ -2223,7 +2245,7 @@ async function restoreSession(s) {
     requestRender();
   }
 }
-session.load().then((s) => {
+acceptSharedPreset().then((shared) => shared ? null : session.load()).then((s) => {
   if (!s?.file || app.preview) return;
   if (s.exporting) {
     savePref("optimal");
