@@ -77,6 +77,8 @@ const P = {
   layers: '<path d="M12 4l9 5-9 5-9-5z"/><path d="M3 14l9 5 9-5" opacity=".55"/>',
   film: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.5v5l4.5-2.5z"/><path d="M3 9h2M3 15h2M19 9h2M19 15h2"/>',
   lamp: '<path d="M5 4l7 5 7-5"/><path d="M12 9v3"/><path d="M7 20l5-8 5 8" opacity=".5"/><circle cx="12" cy="12" r="1.6"/>',
+  eyeshadow: '<path d="M3 14c3-3.5 6-5 9-5s6 1.5 9 5"/><path d="M5 10.5c2.2-3 4.6-4.5 7-4.5s4.8 1.5 7 4.5" opacity=".5"/><path d="M3 14c3 2.5 6 3.5 9 3.5s6-1 9-3.5" opacity=".5"/>',
+  lashes: '<path d="M3 14c3-3.5 6-5 9-5s6 1.5 9 5"/><path d="M6 11.5L4.5 8.5M9 10l-1-3.5M12 9.3V5.5M15 10l1-3.5M18 11.5l1.5-3"/>',
   grid: '<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.5"/>',
   undo: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4.5v4h4"/>',
 };
@@ -96,7 +98,7 @@ const BY_PARAM = {
   "face_shape.symmetry": "symmetry",
   "body.waist": "waist", "body.hips": "hips", "body.legs": "legs", "body.length": "length", "body.arms": "arms",
   "body.shoulders": "shoulders", "body.neck": "neck",
-  "makeup.lips": "lips", "makeup.blush": "cheek", "makeup.brows": "brows", "makeup.eyeliner": "eyeliner", "makeup.contour": "contour",
+  "makeup.lips": "lips", "makeup.blush": "cheek", "makeup.brows": "brows", "makeup.eyeliner": "eyeliner", "makeup.contour": "contour", "makeup.shadow": "eyeshadow", "makeup.mascara": "lashes", "makeup.highlight": "sparkle", "makeup.iris": "iris",
   "hair.thick": "hair", "hair.volume": "volume", "hair.amount": "dropHalf", "hair.shine": "sparkle", "hair.roots": "roots",
   "background.blur": "blur", "background.brightness": "sun", "background.saturation": "dropHalf",
   "object.brightness": "sun", "object.contrast": "contrast", "object.saturation": "dropHalf", "object.sharpness": "blur",

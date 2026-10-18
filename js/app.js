@@ -4,7 +4,7 @@ import "./ops/index.js";
 import { ORDER } from "./ops/index.js";
 import { REGISTRY, Pipeline, defaults, isIdentity } from "./core/pipeline.js";
 import { FILTER_NAMES, filterThumb } from "./ops/filters.js";
-import { LIP_COLORS, BLUSH_COLORS } from "./ops/makeup.js";
+import { LIP_COLORS, BLUSH_COLORS, SHADOW_COLORS, EYE_COLORS } from "./ops/makeup.js";
 import { HAIR_NAMES, HAIR_COLORS } from "./ops/hair.js";
 import { REPLACE, PLAIN, GRADIENT } from "./ops/background.js";
 import { iconFor } from "./icons.js";
@@ -85,7 +85,12 @@ const TABS = [
       ...Object.keys(LIP_COLORS).map((n, k) => ({ op: "makeup", param: "lip_color", option: k, label: n })),
       { op: "makeup", param: "blush" },
       ...Object.keys(BLUSH_COLORS).map((n, k) => ({ op: "makeup", param: "blush_color", option: k, label: n })),
-      { op: "makeup", param: "brows" }, { op: "makeup", param: "eyeliner" }, { op: "makeup", param: "contour" },
+      { op: "makeup", param: "shadow" },
+      ...Object.keys(SHADOW_COLORS).map((n, k) => ({ op: "makeup", param: "shadow_color", option: k, label: n })),
+      { op: "makeup", param: "mascara" }, { op: "makeup", param: "eyeliner" }, { op: "makeup", param: "brows" },
+      { op: "makeup", param: "highlight" }, { op: "makeup", param: "contour" },
+      { op: "makeup", param: "iris" },
+      ...Object.keys(EYE_COLORS).map((n, k) => ({ op: "makeup", param: "iris_color", option: k, label: n })),
     ],
   },
   {
@@ -775,6 +780,8 @@ function swatch(t) {
   const key = `${t.op}.${t.param}`;
   if (key === "makeup.lip_color") { const [L, a, b] = Object.values(LIP_COLORS)[t.option]; return labCss(L, a, b); }
   if (key === "makeup.blush_color") { const [a, b] = Object.values(BLUSH_COLORS)[t.option]; return labCss(66, a, b); }
+  if (key === "makeup.shadow_color") { const [L, a, b] = Object.values(SHADOW_COLORS)[t.option]; return labCss(L, a, b); }
+  if (key === "makeup.iris_color") { const [L, a, b] = Object.values(EYE_COLORS)[t.option]; return labCss(L, a, b); }
   if (key === "hair.color" && t.option > 0) { const [L, a, b] = HAIR_COLORS[HAIR_NAMES[t.option]]; return labCss(L, a, b); }
   if (key === "background.replace") {
     const n = REPLACE[t.option];
@@ -807,6 +814,10 @@ const TIPS = {
   objectRemove: "Нейросеть уберёт выделенный предмет и дорисует фон.",
   "hair.thick": "Затягивает просветы и пробор — волосы выглядят гуще.",
   "relight.amount": "Мягкий студийный свет на лицо — направление выбирается кнопками «Свет: …».",
+  "makeup.shadow": "Тени для век — оттенок выбирается цветными кнопками рядом.",
+  "makeup.mascara": "Ресницы темнее и гуще — кожа века не красится.",
+  "makeup.highlight": "Перламутровый блеск на скулах, носу и над губой.",
+  "makeup.iris": "Новый цвет глаз — рисунок радужки и блик сохраняются.",
   "btn-video": "Ретушь видео до 15 секунд: кожа, тон и цвет в каждом кадре, звук сохраняется.",
   "btn-camera": "Камера подскажет, как встать к свету и держать телефон, — и снимет лучший кадр.",
 };

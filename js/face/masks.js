@@ -157,6 +157,64 @@ function eyeliner(roi) {
   return m;
 }
 
+// eyeshadow: the lid from the lash line up to about half way to the brow, strongest at the lashes,
+// a short wing at the outer corner; never over the eyeball
+function eyeshadow(roi) {
+  const p = roi.pts, fw = roi.fw, c = new Canvas(roi.w, roi.h);
+  for (const [lid, brow] of [[UPPER_LID_R, T.RIGHT_BROW], [UPPER_LID_L, T.LEFT_BROW]]) {
+    const lidPts = pick(p, lid), browPts = pick(p, brow);
+    const toward = (q, f) => {
+      let best = browPts[0], bd = Infinity;
+      for (const b of browPts) { const d = Math.hypot(b[0] - q[0], b[1] - q[1]); if (d < bd) { bd = d; best = b; } }
+      return [q[0] + (best[0] - q[0]) * f, q[1] + (best[1] - q[1]) * f];
+    };
+    for (const [f, value] of [[0.55, 0.45], [0.35, 0.75], [0.18, 1]]) { // layers: a soft fade upwards
+      const top = lidPts.map((q) => toward(q, f));
+      c.poly([...lidPts, ...top.reverse()], value);
+    }
+    const outer = lidPts[lidPts.length - 1], prev = lidPts[lidPts.length - 3];
+    let dx = outer[0] - prev[0], dy = outer[1] - prev[1];
+    const dn = Math.hypot(dx, dy) + 1e-6;
+    dx /= dn; dy /= dn;
+    const tip = toward([outer[0] + dx * 0.05 * fw, outer[1] + dy * 0.05 * fw], 0.25);
+    c.poly([outer, tip, toward(outer, 0.35)], 0.7);
+  }
+  const m = feather(c.plane(), 0.018 * fw);
+  const eyes = feather(new Canvas(roi.w, roi.h).poly(pick(p, T.RIGHT_EYE)).poly(pick(p, T.LEFT_EYE)).plane(), 0.002 * fw);
+  const brows = feather(new Canvas(roi.w, roi.h).poly(pick(p, T.RIGHT_BROW)).poly(pick(p, T.LEFT_BROW)).plane(), 0.01 * fw);
+  for (let i = 0; i < m.data.length; i++) m.data[i] *= (1 - eyes.data[i]) * (1 - brows.data[i]);
+  return m;
+}
+
+// lashes: a thin band just above the upper lash line (mascara darkens the hairs there)
+function lashes(roi) {
+  const c = new Canvas(roi.w, roi.h), p = roi.pts, fw = roi.fw;
+  for (const lid of [UPPER_LID_R, UPPER_LID_L]) {
+    const pts = pick(p, lid);
+    for (let i = 0; i < pts.length - 1; i++) c.line(pts[i], pts[i + 1], Math.max(1, fw * 0.03));
+  }
+  const m = feather(c.plane(), 0.006 * fw);
+  const eyes = new Canvas(roi.w, roi.h).poly(pick(p, T.RIGHT_EYE)).poly(pick(p, T.LEFT_EYE)).plane();
+  for (let i = 0; i < m.data.length; i++) m.data[i] *= 1 - 0.7 * eyes.data[i];
+  return m;
+}
+
+// highlighter: the tops of the cheekbones, the nose bridge, the cupid's bow, the inner eye corners
+function highlight(roi) {
+  const p = roi.pts, fw = roi.fw, c = new Canvas(roi.w, roi.h);
+  let dx = p[T.CHIN][0] - p[T.FOREHEAD][0], dy = p[T.CHIN][1] - p[T.FOREHEAD][1];
+  const dn = Math.hypot(dx, dy) + 1e-6;
+  dx /= dn; dy /= dn;
+  for (const [corner, ear] of [[33, 234], [263, 454]]) {
+    const cc = [0.55 * p[corner][0] + 0.45 * p[ear][0] + dx * 0.07 * fw, 0.55 * p[corner][1] + 0.45 * p[ear][1] + dy * 0.07 * fw];
+    c.ellipse(cc, 0.075 * fw, 0.028 * fw, deg(p[ear][0] - p[corner][0], p[ear][1] - p[corner][1]));
+  }
+  c.polyline(pick(p, [168, 6, 197, 195, 5]), Math.max(1, 0.022 * fw), 0.8);
+  c.circle([p[0][0] - dx * 0.012 * fw, p[0][1] - dy * 0.012 * fw], 0.016 * fw, 0.8); // cupid's bow
+  for (const k of [133, 362]) c.circle(p[k], 0.012 * fw, 0.7);
+  return feather(c.plane(), 0.02 * fw);
+}
+
 const deg = (dx, dy) => (Math.atan2(dy, dx) * 180) / Math.PI;
 
 function contourShadow(roi) {
@@ -306,6 +364,9 @@ export const MASKS = {
   brows,
   cheeks: perFace(cheeks),
   eyeliner: perFace(eyeliner),
+  eyeshadow: perFace(eyeshadow),
+  lashes: perFace(lashes),
+  highlight: perFace(highlight),
   contour_shadow: perFace(contourShadow),
   contour_light: perFace(contourLight),
 };
