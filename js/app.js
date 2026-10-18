@@ -1345,11 +1345,37 @@ async function decode(file) {
   try {
     return await createImageBitmap(file, { imageOrientation: "from-image" });
   } catch {
-    const img = new Image();
-    img.src = URL.createObjectURL(file);
-    await img.decode();
-    return img;
+    try {
+      const img = new Image();
+      img.src = URL.createObjectURL(file);
+      await img.decode();
+      return img;
+    } catch (err) {
+      if (isHeic(file)) return decodeHeic(file);
+      throw err;
+    }
   }
+}
+
+// iPhone photos (HEIC) open natively only in Safari: Chrome, Firefox, Edge on Android, Windows,
+// Mac and Linux get libheif (WebAssembly, 1.4 MB, loaded only when such a photo is opened)
+const isHeic = (file) => /\.hei[cf]$/i.test(file.name || "") || /image\/hei[cf]/i.test(file.type || "");
+let heifLib = null;
+async function decodeHeic(file) {
+  toast("Открываю фото HEIC…", 0);
+  heifLib ||= import("../vendor/libheif/libheif-bundle.mjs").then((m) => m.default());
+  const lib = await heifLib, images = new lib.HeifDecoder().decode(new Uint8Array(await file.arrayBuffer()));
+  if (!images?.length) throw new Error("HEIC: no image");
+  const im = images[0], w = im.get_width(), h = im.get_height();
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const g = c.getContext("2d"), data = g.createImageData(w, h);
+  await new Promise((resolve, reject) => im.display(data, (d) => (d ? resolve() : reject(new Error("HEIC: decode")))));
+  g.putImageData(data, 0, 0);
+  for (const x of images) x.free?.();
+  hideToast();
+  return c;
 }
 
 async function openFile(file, { restoring = false } = {}) {
@@ -1472,6 +1498,51 @@ $("camera").addEventListener("change", (e) => {
   const name = `selfie_${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}_${p2(d.getHours())}-${p2(d.getMinutes())}.jpg`;
   openFile(new File([f], name, { type: f.type || "image/jpeg" }));
 });
+// --- any platform: install as an app, keyboard on computers -------------------------------------------
+// Chrome / Edge (Android, Windows, Mac, Linux) offer installing through this event: a button for it.
+// Safari has no such event: a line on how to do it (iPhone — the welcome tour explains it too).
+let installEvent = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installEvent = e;
+  $("btn-install").hidden = false;
+  $("install-hint").hidden = true;
+});
+$("btn-install").onclick = async () => {
+  if (!installEvent) return;
+  installEvent.prompt();
+  await installEvent.userChoice.catch(() => {});
+  installEvent = null;
+  $("btn-install").hidden = true;
+};
+window.addEventListener("appinstalled", () => { $("btn-install").hidden = true; });
+{
+  const ua = navigator.userAgent, installed = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  const iOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const macSafari = /Macintosh/.test(ua) && /Safari\//.test(ua) && !/Chrome|Chromium|Edg|Firefox/.test(ua) && !iOS;
+  const hint = installed ? "" : iOS ? "Как приложение: «Поделиться» → «На экран „Домой“»."
+    : macSafari ? "Как приложение: меню «Файл» → «Добавить в Dock»." : "";
+  $("install-hint").textContent = hint;
+  $("install-hint").hidden = !hint;
+}
+
+// computers: Ctrl/⌘+Z undo, Ctrl/⌘+Shift+Z or Ctrl+Y redo, Ctrl/⌘+S save, Ctrl/⌘+O open; hold Space for «До»
+document.addEventListener("keydown", (e) => {
+  if (e.target.closest?.("input, textarea")) return;
+  const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+  if (mod && (k === "z" || k === "я") && !e.shiftKey) { e.preventDefault(); undo(); }
+  else if (mod && ((k === "z" || k === "я") && e.shiftKey || k === "y" || k === "н")) { e.preventDefault(); redo(); }
+  else if (mod && (k === "s" || k === "ы")) { e.preventDefault(); save(); }
+  else if (mod && (k === "o" || k === "щ")) { e.preventDefault(); $("file").click(); }
+  else if (e.code === "Space" && !e.repeat && app.preview && !before.hidden) {
+    e.preventDefault();
+    before.dispatchEvent(new PointerEvent("pointerdown"));
+  }
+});
+document.addEventListener("keyup", (e) => {
+  if (e.code === "Space") release();
+});
+
 $("btn-undo").onclick = undo;
 $("btn-redo").onclick = redo;
 

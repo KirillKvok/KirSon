@@ -345,3 +345,6 @@ main#stage { touch-action: none; }
 .tool.thumb img { width: 58px; height: 58px; border-radius: 10px; object-fit: cover; display: block; }
 .tool.thumb .dot { display: none; }
 .tool.thumb.on img { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* install as an app (Chrome / Edge on Android, Windows, Mac, Linux), or how to do it in Safari */
+.welcome .install-hint { font-size: 12.5px; margin: 12px 0 0; line-height: 1.4; }
