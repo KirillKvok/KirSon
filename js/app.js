@@ -1363,6 +1363,17 @@ $("bg-file").addEventListener("change", async (e) => {
   e.target.value = "";
 });
 for (const id of ["btn-open", "btn-open-big"]) $(id).onclick = () => $("file").click();
+// selfie: phones and tablets open the front camera right away (on a computer it would only be a file dialog)
+$("btn-camera").hidden = !matchMedia("(pointer: coarse)").matches;
+$("btn-camera").onclick = () => $("camera").click();
+$("camera").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  e.target.value = ""; // the same shot can be taken again
+  if (!f) return;
+  const d = new Date(), p2 = (n) => String(n).padStart(2, "0"); // iOS names every shot «image.jpg»
+  const name = `selfie_${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}_${p2(d.getHours())}-${p2(d.getMinutes())}.jpg`;
+  openFile(new File([f], name, { type: f.type || "image/jpeg" }));
+});
 $("btn-undo").onclick = undo;
 $("btn-redo").onclick = redo;
 
