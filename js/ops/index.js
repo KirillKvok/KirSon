@@ -14,7 +14,8 @@ import "./crop.js";
 import "./brushes.js";
 import "./faces.js";
 import "./object.js";
+import "./relight.js";
 
-export const ORDER = ["face_select", "mask_edit", "heal", "skin", "skin_natural", "skin_tone", "face_light",
+export const ORDER = ["face_select", "mask_edit", "heal", "skin", "skin_natural", "skin_tone", "face_light", "relight",
   "face_detail", "teeth_eyes", "makeup", "hair", "face_shape", "body", "background", "object", "liquify",
   "light", "brightness", "contrast", "color", "filter", "sharpen", "grain", "crop"];

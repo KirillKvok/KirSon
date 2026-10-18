@@ -8,6 +8,7 @@ import { LIP_COLORS, BLUSH_COLORS } from "./ops/makeup.js";
 import { HAIR_NAMES, HAIR_COLORS } from "./ops/hair.js";
 import { REPLACE, PLAIN, GRADIENT } from "./ops/background.js";
 import { iconFor } from "./icons.js";
+import { LIGHT_DIRS } from "./ops/relight.js";
 import { labToRgb } from "./core/img.js";
 import { LOOKS as BASE_LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
 import { MORE_LOOKS, MORE_PRESETS } from "./core/styles.js";
@@ -58,9 +59,10 @@ const TABS = [
     tools: [
       ...[["skin", "smooth"], ["skin", "blemish"], ["face_light", "matte"], ["skin_tone", "even"],
       ["skin_tone", "redness"], ["face_detail", "circles"], ["face_detail", "bags"], ["face_detail", "folds"],
-      ["face_detail", "wrinkles"], ["face_light", "soften"], ["face_light", "fill"], ["skin_tone", "tan"],
+      ["face_detail", "wrinkles"], ["face_light", "soften"], ["face_light", "fill"], ["relight", "amount"], ["skin_tone", "tan"],
       ["teeth_eyes", "teeth"], ["teeth_eyes", "sclera"], ["teeth_eyes", "iris"], ["skin", "texture"],
       ["skin_natural", "texture"], ["skin_natural", "volume"], ["skin", "body"]].map(([op, param]) => ({ op, param })),
+      ...LIGHT_DIRS.map((n, k) => ({ op: "relight", param: "dir", option: k, label: `Свет: ${n.toLowerCase()}` })),
       { kind: "facePick", label: "Выбрать лицо" },
       { kind: "faceAll", label: "Все лица" },
     ],
@@ -804,6 +806,7 @@ const TIPS = {
   presetSave: "Сохраните правки как свой пресет — он работает с любым фото.",
   objectRemove: "Нейросеть уберёт выделенный предмет и дорисует фон.",
   "hair.thick": "Затягивает просветы и пробор — волосы выглядят гуще.",
+  "relight.amount": "Мягкий студийный свет на лицо — направление выбирается кнопками «Свет: …».",
   "btn-video": "Ретушь видео до 15 секунд: кожа, тон и цвет в каждом кадре, звук сохраняется.",
   "btn-camera": "Камера подскажет, как встать к свету и держать телефон, — и снимет лучший кадр.",
 };

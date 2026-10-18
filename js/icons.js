@@ -76,6 +76,7 @@ const P = {
   bookmark: '<path d="M7 3.5h10v17l-5-4-5 4z"/>',
   layers: '<path d="M12 4l9 5-9 5-9-5z"/><path d="M3 14l9 5 9-5" opacity=".55"/>',
   film: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.5v5l4.5-2.5z"/><path d="M3 9h2M3 15h2M19 9h2M19 15h2"/>',
+  lamp: '<path d="M5 4l7 5 7-5"/><path d="M12 9v3"/><path d="M7 20l5-8 5 8" opacity=".5"/><circle cx="12" cy="12" r="1.6"/>',
   grid: '<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.5"/>',
   undo: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4.5v4h4"/>',
 };
@@ -85,7 +86,7 @@ const svg = (k) => `<svg viewBox="0 0 24 24" aria-hidden="true">${P[k] || P.slid
 // op.param -> icon
 const BY_PARAM = {
   "skin.smooth": "smooth", "skin.blemish": "target", "skin.texture": "grain", "skin.body": "body",
-  "face_light.matte": "drop", "face_light.soften": "sunSoft", "face_light.fill": "bulb",
+  "face_light.matte": "drop", "face_light.soften": "sunSoft", "face_light.fill": "bulb", "relight.amount": "lamp", "relight.dir": "lamp",
   "skin_tone.even": "tone", "skin_tone.redness": "flame", "skin_tone.tan": "sun",
   "face_detail.circles": "eyeUnder", "face_detail.bags": "eyeUnder", "face_detail.folds": "folds", "face_detail.wrinkles": "wrinkles",
   "teeth_eyes.teeth": "tooth", "teeth_eyes.sclera": "eye", "teeth_eyes.iris": "iris",
