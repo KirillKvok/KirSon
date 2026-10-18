@@ -75,6 +75,7 @@ const P = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   bookmark: '<path d="M7 3.5h10v17l-5-4-5 4z"/>',
   layers: '<path d="M12 4l9 5-9 5-9-5z"/><path d="M3 14l9 5 9-5" opacity=".55"/>',
+  film: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.5v5l4.5-2.5z"/><path d="M3 9h2M3 15h2M19 9h2M19 15h2"/>',
   grid: '<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.5"/>',
   undo: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4.5v4h4"/>',
 };
@@ -108,7 +109,7 @@ const BY_KIND = {
   auto: "sparkle", strength: "slider", reset: "reset", facePick: "person", faceAll: "group",
   objectPick: "cursor", objectRemove: "eraser", objectClear: "close", brushSize: "size", brushStrength: "gauge",
   brushClear: "trash", aspect: "rect", rotate: "rotate", flip: "flip", frameReset: "reset",
-  presetSave: "plus", versionSave: "bookmark", compare: "grid", batch: "layers", myPreset: "layers", preset: "layers",
+  presetSave: "plus", versionSave: "bookmark", compare: "grid", batch: "layers", videoEdit: "film", myPreset: "layers", preset: "layers",
 };
 const BRUSH = { liquify: ["push", "shrink", "expand"], heal: ["bandage"], mask_edit: ["shield", "brush", "person", "mountain"] };
 

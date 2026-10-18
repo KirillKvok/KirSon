@@ -23,6 +23,7 @@ import * as session from "./session.js";
 import { FORMATS, fit, facesFocus } from "./social.js";
 import { videoSupported, record } from "./video.js";
 import { openCompare } from "./compare.js";
+import { editVideo, videoEditSupported, audioContext } from "./videoedit.js";
 
 // the desktop's looks and presets plus the web's own styles (core/styles.js)
 const LOOKS = { ...BASE_LOOKS, ...MORE_LOOKS }, PRESETS = { ...BUILTIN, ...MORE_PRESETS };
@@ -420,6 +421,64 @@ $("batch-files").addEventListener("change", async (e) => {
   toast(`Готово: ${out.length} фото${failed ? `, не получилось: ${failed}` : ""}`, 0, [["Сохранить все", saveBatch]]);
 });
 
+// --- «Ретушь видео»: a short selfie video with the current edit (js/videoedit.js) --------------------
+// Without an open photo (from the start screen) the natural look «Свежесть» is used.
+let videoAudio = null, videoRunning = false;
+function startVideo() {
+  if (videoRunning) return;
+  videoAudio?.close?.();
+  videoAudio = audioContext(); // during the tap: iPhone allows sound only then
+  $("video-file").value = "";
+  $("video-file").click();
+}
+function videoState() {
+  if (app.original && Object.keys(portableValues()).length) return batchState();
+  const p = Pipeline.fromOrder(ORDER), vals = LOOKS["Свежесть"];
+  for (const st of p.steps) if (vals[st.op]) st.values = { ...vals[st.op] };
+  return p.toJSON();
+}
+$("btn-video").hidden = !videoEditSupported();
+$("btn-video").onclick = startVideo;
+$("video-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file || videoRunning) return;
+  videoRunning = true;
+  const state = videoState(), phone = /iPhone|iPad|iPod|Android/.test(navigator.userAgent);
+  $("busy").hidden = false;
+  toast("Видео: обрабатываю кадры… 0%", 0);
+  let id = 2e6 + (Date.now() % 1e6);
+  try {
+    const res = await editVideo(file, {
+      longSide: phone ? 720 : 1080,
+      audio: videoAudio,
+      processFrame: async (img) => {
+        id++;
+        const a = await analyze(img);
+        a.imageId = id;
+        engine.setAnalysis(a);
+        engine.setImage("vframe", img, 1, id);
+        const { image } = await engine.render("vframe", state);
+        engine.drop("vframe");
+        engine.forgetAnalysis(id);
+        return image;
+      },
+      onProgress: (stage, p) => {
+        $("toast").firstChild.textContent = stage === "frames"
+          ? `Видео: обрабатываю кадры… ${Math.round(p * 100)}%` : `Видео: собираю со звуком… ${Math.round(p * 100)}%`;
+      },
+    });
+    savedFile = res.file;
+    const notes = [res.cut ? "первые 15 с" : "", res.sound ? "" : "без звука"].filter(Boolean).join(", ");
+    toast(`Видео готово · ${(res.file.size / 1048576).toFixed(1)} МБ${notes ? ` (${notes})` : ""}`, 0, [["Сохранить в Фото", shareSaved]]);
+  } catch (err) {
+    console.error(err);
+    toast("Не удалось обработать видео");
+    engine.drop("vframe");
+  }
+  $("busy").hidden = true;
+  videoRunning = false;
+});
+
 let batchFiles = [];
 async function saveBatch() {
   if (navigator.canShare && navigator.canShare({ files: batchFiles })) {
@@ -478,6 +537,7 @@ function mineTools() {
   tools.push({ kind: "versionSave", label: "＋ Запомнить версию" });
   if (app.versions.length) tools.push({ kind: "compare", label: "Сравнить версии" });
   tools.push({ kind: "batch", label: "Пакет фото" });
+  if (videoEditSupported()) tools.push({ kind: "videoEdit", label: "Видео с этими правками" });
   for (const v of [...app.versions].reverse()) tools.push({ kind: "version", version: v, label: v.name });
   return tools;
 }
@@ -542,6 +602,7 @@ function kindTool(t, b) {
     if (t.kind === "version") return openVersion(t.version);
     if (t.kind === "compare") return compareVersions();
     if (t.kind === "batch") return startBatch();
+    if (t.kind === "videoEdit") return startVideo();
     if (t.kind === "look") {
       app.look = t.name;
       app.tool = TABS[app.tab].tools.find((x) => x.kind === "strength");
