@@ -58,7 +58,7 @@ const TABS = [
     name: "Лицо",
     tools: [
       ...[["skin", "smooth"], ["skin", "blemish"], ["face_light", "matte"], ["skin_tone", "even"],
-      ["skin_tone", "redness"], ["face_detail", "circles"], ["face_detail", "bags"], ["face_detail", "folds"],
+      ["skin_tone", "redness"], ["freckles", "amount"], ["face_detail", "circles"], ["face_detail", "bags"], ["face_detail", "folds"],
       ["face_detail", "wrinkles"], ["face_light", "soften"], ["face_light", "fill"], ["relight", "amount"], ["skin_tone", "tan"],
       ["teeth_eyes", "teeth"], ["teeth_eyes", "sclera"], ["teeth_eyes", "iris"], ["skin", "texture"],
       ["skin_natural", "texture"], ["skin_natural", "volume"], ["skin", "body"]].map(([op, param]) => ({ op, param })),
@@ -189,6 +189,16 @@ function values(op) {
 function setValue(op, param, v) {
   app.pipeline.step(op).values[param] = v;
 }
+// a saved edit (session, version, undo step) made before an operation existed: brought to the current
+// list of operations — the new ones at their defaults (otherwise their tools had no step to set)
+function fromState(json) {
+  const d = typeof json === "string" ? JSON.parse(json) : json, p = Pipeline.fromOrder(ORDER);
+  for (const st of d.steps || []) {
+    const t = p.step(st.op);
+    if (t) { t.values = { ...(st.values || {}) }; t.enabled = st.enabled !== false; }
+  }
+  return p;
+}
 function snapshot() {
   return JSON.stringify(app.pipeline.toJSON());
 }
@@ -201,7 +211,7 @@ function pushHistory() {
   if (app.original && !app.restoring) session.save({ state: s });
 }
 function restore(s) {
-  app.pipeline = Pipeline.fromJSON(JSON.parse(s));
+  app.pipeline = fromState(s);
   renderTools();
   requestRender();
   drawOverlay();
@@ -363,7 +373,7 @@ function addVersion(name) {
 }
 
 function openVersion(v) {
-  app.pipeline = Pipeline.fromJSON(JSON.parse(v.state));
+  app.pipeline = fromState(v.state);
   app.look = null;
   pushHistory();
   renderTools();
@@ -818,6 +828,7 @@ const TIPS = {
   "makeup.mascara": "Ресницы темнее и гуще — кожа века не красится.",
   "makeup.highlight": "Перламутровый блеск на скулах, носу и над губой.",
   "makeup.iris": "Новый цвет глаз — рисунок радужки и блик сохраняются.",
+  "freckles.amount": "Влево — убрать веснушки, вправо — добавить естественные на нос и щёки.",
   "btn-video": "Ретушь видео до 15 секунд: кожа, тон и цвет в каждом кадре, звук сохраняется.",
   "btn-camera": "Камера подскажет, как встать к свету и держать телефон, — и снимет лучший кадр.",
 };
@@ -2168,7 +2179,7 @@ async function restoreSession(s) {
     engine.setPicture(s.bgPid, imageData(pic, w, h));
   }
   if (s.state) {
-    app.pipeline = Pipeline.fromJSON(JSON.parse(s.state));
+    app.pipeline = fromState(s.state);
     app.history = [s.state];
     app.future = [];
     const o = app.pipeline.step("object").values; // the selected object's mask is made again
