@@ -22,6 +22,7 @@ import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
 import * as session from "./session.js";
 import { FORMATS, fit, facesFocus } from "./social.js";
 import { videoSupported, record } from "./video.js";
+import { openCompare } from "./compare.js";
 
 // the desktop's looks and presets plus the web's own styles (core/styles.js)
 const LOOKS = { ...BASE_LOOKS, ...MORE_LOOKS }, PRESETS = { ...BUILTIN, ...MORE_PRESETS };
@@ -359,6 +360,19 @@ function openVersion(v) {
   drawOverlay();
 }
 
+// «Сравнить версии»: «Сейчас» and the newest versions side by side (quick 640 px renders)
+function compareVersions() {
+  if (!app.preview) return;
+  const now = snapshot();
+  const items = [{ name: "Сейчас", state: now, thumb: null, current: true },
+    ...[...app.versions].reverse().filter((v) => v.state !== now)];
+  openCompare({
+    items,
+    render: async (state) => (await engine.render("fast", JSON.parse(state))).image,
+    onPick: (it) => openVersion(it),
+  });
+}
+
 function deleteVersion(v) {
   toast(`Удалить «${v.name}»?`, 0, [["Удалить", () => {
     app.versions = app.versions.filter((x) => x !== v);
@@ -380,6 +394,7 @@ function mineTools() {
   const tools = [{ kind: "presetSave", label: "＋ Сохранить пресет" }];
   for (const p of myPresets()) tools.push({ kind: "myPreset", preset: p, label: p.name });
   tools.push({ kind: "versionSave", label: "＋ Запомнить версию" });
+  if (app.versions.length) tools.push({ kind: "compare", label: "Сравнить версии" });
   for (const v of [...app.versions].reverse()) tools.push({ kind: "version", version: v, label: v.name });
   return tools;
 }
@@ -442,6 +457,7 @@ function kindTool(t, b) {
       return toast(app.versions.length > n ? "Версия запомнена — нажмите на неё, чтобы вернуться" : "Такая версия уже есть");
     }
     if (t.kind === "version") return openVersion(t.version);
+    if (t.kind === "compare") return compareVersions();
     if (t.kind === "look") {
       app.look = t.name;
       app.tool = TABS[app.tab].tools.find((x) => x.kind === "strength");
