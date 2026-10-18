@@ -328,3 +328,14 @@ main#stage { touch-action: none; }
   position: absolute; left: 16px; right: 16px; top: 18px; text-align: center; font-size: 12.5px;
   color: var(--muted, rgba(246, 242, 237, 0.65)); pointer-events: none;
 }
+
+/* «↺»: cancel the current effect (grain switched on by accident, …); a whole tab at the end of its tools */
+.tool-reset {
+  width: 36px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 10px;
+  background: var(--chip); border: 1px solid var(--line); color: var(--accent); cursor: pointer; padding: 0;
+}
+.tool-reset svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tool-reset:disabled { opacity: 0.3; cursor: default; }
+.tool.reset-tab { color: var(--accent); }
+/* brush size preview while the slider moves */
+#ring.preview { background: rgba(255, 255, 255, 0.18); transition: width 0.06s, height 0.06s; }

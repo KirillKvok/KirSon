@@ -540,6 +540,13 @@ function renderTools() {
       renderTools();
     };
   }
+  if (tabChanged()) {
+    const b = document.createElement("button");
+    b.className = "tool reset-tab";
+    b.textContent = "↺ Сбросить вкладку";
+    b.onclick = resetTab;
+    row.appendChild(b);
+  }
   renderSlider();
 }
 
@@ -552,6 +559,7 @@ function renderSlider() {
   $("panel-hint").hidden = !hint;
   $("panel-hint").textContent = hint;
   if (!t) return;
+  $("tool-reset").hidden = !!t.kind;
   if (t.kind === "brushSize" || t.kind === "brushStrength") {
     const key = t.kind === "brushSize" ? "size" : "strength";
     s.min = 1;
@@ -575,6 +583,32 @@ function renderSlider() {
   s.value = values(t.op)[t.param];
   $("tool-label").textContent = toolLabel(t);
   $("tool-value").textContent = s.value;
+  $("tool-reset").hidden = false;
+  $("tool-reset").disabled = Number(s.value) === p.def;
+}
+
+// «↺» next to the slider: the current effect back to its default (one undo step)
+$("tool-reset").addEventListener("click", () => {
+  const t = app.tool;
+  if (!t || t.kind) return;
+  setValue(t.op, t.param, paramOf(t).def);
+  pushHistory();
+  renderTools();
+  requestRender();
+  toast(`«${toolLabel(t)}» отменено`, 1500);
+});
+
+// the sliders of a tab back to their defaults (choices too: filter «Нет», hair colour …)
+function tabChanged(tab = TABS[app.tab]) {
+  return tab.tools.some((t) => t.op && !t.kind && values(t.op)[t.param] !== paramOf(t).def);
+}
+function resetTab() {
+  const tab = TABS[app.tab];
+  for (const t of tab.tools) if (t.op && !t.kind) setValue(t.op, t.param, paramOf(t).def);
+  pushHistory();
+  renderTools();
+  requestRender();
+  toast(`Вкладка «${tab.name}» сброшена — вернуть можно стрелкой назад`, 2200);
 }
 
 $("slider").addEventListener("input", (e) => {
@@ -584,6 +618,7 @@ $("slider").addEventListener("input", (e) => {
   if (t.kind === "brushSize" || t.kind === "brushStrength") {
     app.brush[t.kind === "brushSize" ? "size" : "strength"] = v;
     $("tool-value").textContent = v;
+    if (t.kind === "brushSize") previewRing(); // the real size on the photo, live
     return;
   }
   if (t.kind === "strength") {
@@ -595,6 +630,7 @@ $("slider").addEventListener("input", (e) => {
   }
   setValue(t.op, t.param, v);
   $("tool-value").textContent = v;
+  $("tool-reset").disabled = v === paramOf(t).def;
   app.dragging = true;
   requestRender();
 });
@@ -884,6 +920,22 @@ function showRing(cx, cy) {
   const d = 2 * brushRadius() * Math.max(r.width, r.height);
   Object.assign(ring.style, { left: `${cx - st.left}px`, top: `${cy - st.top}px`, width: `${d}px`, height: `${d}px` });
   ring.hidden = false;
+}
+
+// while the size slider moves: the brush circle at its real size in the middle of the visible photo
+let ringTimer = 0;
+function previewRing() {
+  if (view.hidden) return;
+  const r = view.getBoundingClientRect(), st = stage.getBoundingClientRect();
+  const x0 = Math.max(r.left, st.left), x1 = Math.min(r.right, st.right);
+  const y0 = Math.max(r.top, st.top), y1 = Math.min(r.bottom, st.bottom);
+  ring.classList.add("preview");
+  showRing((x0 + x1) / 2, (y0 + y1) / 2);
+  clearTimeout(ringTimer);
+  ringTimer = setTimeout(() => {
+    ring.classList.remove("preview");
+    if (!stroke) ring.hidden = true;
+  }, 1200);
 }
 
 function strokesOfTool() {
