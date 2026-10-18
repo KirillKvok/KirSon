@@ -18,6 +18,7 @@ import { objectKey } from "./ops/object.js";
 import { Engine } from "./engine.js";
 import { analyze, objectMask, parseFaces, warmUpParsing, removeFill, superResolve, faceTracker } from "./face/analysis.js";
 import { openCoach } from "./coach.js";
+import * as assets from "./assets.js";
 import { VERSION } from "./version.js";
 import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
 import * as session from "./session.js";
@@ -381,6 +382,7 @@ function enhancePhoto() {
 async function runEnhance(inSide) {
   const before = app.file, name = app.name;
   $("busy").hidden = false;
+  await ensureExtra("enhance");
   toast("Улучшаю качество… 0%", 0);
   try {
     const [sw, sh] = scaled(app.original, inSide), small = imageData(canvasOf(app.original), sw, sh);
@@ -1308,6 +1310,7 @@ async function pickObject(x, y) {
   app.objectPick = false;
   $("busy").hidden = false;
   try {
+    await ensureExtra("object");
     const conf = await objectMask(app.original, x, y);
     objectConfs.set(objectKey(x, y), conf);
     engine.setObjectMask(x, y, conf);
@@ -1349,6 +1352,7 @@ async function removeObject() {
   if (v.remove >= 0.5) return toast("Объект уже удалён — отменить можно стрелкой назад", 2500);
   const [x, y] = [v.x, v.y];
   $("busy").hidden = false;
+  await ensureExtra("remove");
   toast("Удаляю объект…", 0);
   try {
     await fillFor(x, y);
@@ -1631,6 +1635,7 @@ async function decode(file) {
 const isHeic = (file) => /\.hei[cf]$/i.test(file.name || "") || /image\/hei[cf]/i.test(file.type || "");
 let heifLib = null;
 async function decodeHeic(file) {
+  await ensureExtra("heic");
   toast("Открываю фото HEIC…", 0);
   heifLib ||= import("../vendor/libheif/libheif-bundle.mjs").then((m) => m.default());
   const lib = await heifLib, images = new lib.HeifDecoder().decode(new Uint8Array(await file.arrayBuffer()));
@@ -2026,7 +2031,46 @@ selectTab(0);
 updateButtons();
 // (not on the development server: a cached copy would hide fresh edits)
 $("version").textContent = `версия ${VERSION}`;
-setTimeout(warmUpParsing, 1500);
+// first start: the networks every photo needs, downloaded once with a progress bar (js/assets.js)
+async function prepareCore() {
+  let todo = [];
+  try { todo = await assets.missing(assets.CORE); } catch { /* no Cache Storage */ }
+  if (!todo.length) return;
+  const box = $("prep"), bar = box.querySelector("i"), text = box.querySelector("span");
+  box.hidden = false;
+  text.textContent = "Готовлю нейросети — это нужно только один раз…";
+  try {
+    await assets.download(todo, (done, total) => {
+      bar.style.width = `${Math.round((done / total) * 100)}%`;
+      text.textContent = `Готовлю нейросети — только один раз: ${assets.progressText(done, total)}`;
+    });
+    bar.style.width = "100%";
+    box.classList.add("done");
+    text.textContent = "Готово — KirSon работает и без интернета";
+    setTimeout(() => { box.hidden = true; }, 4000);
+  } catch (err) {
+    console.warn("prefetch", err);
+    box.hidden = true; // offline or blocked: the networks load as they are needed
+  }
+}
+prepareCore().finally(() => setTimeout(warmUpParsing, 500));
+
+// a feature's own network (object selection, removal, enhancement, HEIC) the first time it is used
+async function ensureExtra(name) {
+  const x = assets.EXTRA[name];
+  let todo = [];
+  try { todo = await assets.missing(x.files); } catch { return; }
+  if (!todo.length) return;
+  toast(`Загружаю нейросеть для ${x.label} (один раз)…`, 0);
+  try {
+    await assets.download(todo, (done, total) => {
+      $("toast").firstChild.textContent = `Загружаю нейросеть для ${x.label} (один раз): ${assets.progressText(done, total)}`;
+    });
+  } catch (err) {
+    console.warn("download", name, err);
+  }
+  hideToast();
+}
 
 // continue the previous work (the app was closed by iOS, or a full-size save ran out of memory)
 async function restoreSession(s) {
