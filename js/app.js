@@ -80,8 +80,8 @@ const TABS = [
     name: "Волосы",
     tools: [
       ...HAIR_NAMES.map((n, k) => ({ op: "hair", param: "color", option: k, label: k ? n : "Свой цвет" })),
-      { op: "hair", param: "amount" }, { op: "hair", param: "shine" }, { op: "hair", param: "volume" },
-      { op: "hair", param: "roots" },
+      { op: "hair", param: "thick" }, { op: "hair", param: "volume" }, { op: "hair", param: "amount" },
+      { op: "hair", param: "shine" }, { op: "hair", param: "roots" },
     ],
   },
   {

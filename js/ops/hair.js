@@ -1,4 +1,4 @@
-// Hair: dye colours, shine, root touch-up, volume — port of kirson/core/ops/hair.py.
+// Hair: dye colours, shine, root touch-up, volume, thicker — port of kirson/core/ops/hair.py.
 import { register, P, choice } from "../core/pipeline.js";
 import * as I from "../core/img.js";
 import { Canvas } from "../core/draw.js";
@@ -26,6 +26,36 @@ function rootsMask(img, ctx, hair, fw) {
   }
   const m = I.gaussian(c.plane(), Math.max(1, 0.15 * fw));
   return I.mapPlane(m, (v, i) => v * hair.data[i]);
+}
+
+// «Гуще»: in thin hair the scalp / background shows between strands — pixels lighter and pinker than
+// the hair mass around them (the parting most of all). They are pulled to the local tone of the hair
+// (a normalised blur inside the mask), the strands' fine texture is kept, and the mass gets a little
+// denser (darker, richer), as thick hair looks.
+function thicker(img, hair, fw, k) {
+  return labEdit(img, hair, fw, (lab, m) => {
+    const { w, h } = m, n = w * h, sigma = Math.max(2, fw * 0.04), fine = Math.max(0.6, fw * 0.003);
+    const conf = I.mapPlane(m, (v) => { const t = clip((v - 0.3) / 0.5); return t * t * (3 - 2 * t); });
+    const L = chan(lab, 0), A = chan(lab, 1), B = chan(lab, 2);
+    const wsum = I.gaussian(conf, sigma), num = I.fimg(w, h, 3);
+    for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) num.data[3 * i + c] = lab.data[3 * i + c] * conf.data[i];
+    const base = I.gaussian(num, sigma), Ls = I.gaussian(L, fine);
+    for (let i = 0; i < n; i++) {
+      const cm = conf.data[i];
+      if (cm <= 0) continue;
+      const d = Math.max(wsum.data[i], 1e-3), bL = base.data[3 * i] / d, bA = base.data[3 * i + 1] / d, bB = base.data[3 * i + 2] / d;
+      const j = 3 * i, l = lab.data[j];
+      // a gap: lighter than the mass, or pinker (scalp at the parting)
+      const gap = Math.max(clip((l - bL - 3) / 14), clip((A.data[i] - bA - 2) / 7) * clip((l - bL + 4) / 10));
+      const g = cm * k * gap;
+      const tex = (l - Ls.data[i]) * 0.6; // the strands' own fine detail stays
+      let nl = l + g * (bL + tex - l);
+      nl -= cm * k * 0.06 * nl * clip((bL - 8) / 20); // denser mass: a touch darker (not for black hair)
+      lab.data[j] = nl;
+      lab.data[j + 1] += g * (bA - lab.data[j + 1]);
+      lab.data[j + 2] += g * (bB - lab.data[j + 2]) + cm * k * 0.04 * (lab.data[j + 2] > 0 ? lab.data[j + 2] : 0);
+    }
+  });
 }
 
 function volumeField(img, ctx, hair, amount) {
@@ -56,7 +86,8 @@ function volumeField(img, ctx, hair, amount) {
 }
 
 register("hair", "Волосы", [choice("color", "Цвет волос", HAIR_NAMES, 0), P("amount", "Сила цвета", 0, 100, 70),
-  P("shine", "Блеск", 0, 100, 0), P("volume", "Объём", 0, 100, 0), P("roots", "Закрасить корни", 0, 100, 0)],
+  P("shine", "Блеск", 0, 100, 0), P("volume", "Объём", 0, 100, 0), P("roots", "Закрасить корни", 0, 100, 0),
+  P("thick", "Гуще", 0, 100, 0)],
   (img, p, ctx) => {
     const fw = refFaceWidth(img, ctx), hair = getMask(img, ctx, "hair");
     if (!I.bbox(hair, 0)) return img;
@@ -77,6 +108,7 @@ register("hair", "Волосы", [choice("color", "Цвет волос", HAIR_NA
         });
       }
     }
+    if (p.thick > 0) out = thicker(out, hair, fw, p.thick / 100); // before the dye: gaps take the new colour too
     if (p.color > 0 && p.amount > 0) {
       const [tL, ta, tb] = HAIR_COLORS[HAIR_NAMES[p.color]], k = p.amount / 100;
       out = labEdit(out, hair, fw, (lab, m) => {
@@ -125,4 +157,4 @@ register("hair", "Волосы", [choice("color", "Цвет волос", HAIR_NA
       }
     }
     return out;
-  }, { category: MAKEUP_TAB, active: (p) => (p.color > 0 && p.amount > 0) || p.shine > 0 || p.volume > 0 || p.roots > 0 });
+  }, { category: MAKEUP_TAB, active: (p) => (p.color > 0 && p.amount > 0) || p.shine > 0 || p.volume > 0 || p.roots > 0 || p.thick > 0 });
