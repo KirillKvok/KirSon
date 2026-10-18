@@ -18,6 +18,7 @@ import { VERSION } from "./version.js";
 import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
 import * as session from "./session.js";
 import { FORMATS, fit, facesFocus } from "./social.js";
+import { videoSupported, record } from "./video.js";
 
 const PREVIEW = 1280; // preview long side (as on the desktop)
 const FAST = 640;     // while a slider is held
@@ -1316,11 +1317,41 @@ function sizePref() {
 // memory, or a copy made for a social network
 function save() {
   if (!app.original) return;
-  const W = app.original.width, H = app.original.height, social = ["Для соцсетей", saveSocial];
-  if (Math.max(W, H) <= EXPORT_PHONE) return toast("Сохранить фото", 0, [[`Полный · ${W}×${H}`, () => exportPhoto("full")], social]);
+  const W = app.original.width, H = app.original.height;
+  const extra = [["Для соцсетей", saveSocial], ...(videoSupported() ? [["Видео до/после", saveVideo]] : [])];
+  if (Math.max(W, H) <= EXPORT_PHONE) return toast("Сохранить фото", 0, [[`Полный · ${W}×${H}`, () => exportPhoto("full")], ...extra]);
   const [w, h] = scaled(app.original, EXPORT_PHONE);
   const full = [`Полный · ${W}×${H}`, () => exportPhoto("full")], opt = [`Лёгкий · ${w}×${h}`, () => exportPhoto("optimal")];
-  toast("Сохранить фото", 0, [...(sizePref() === "optimal" ? [opt, full] : [full, opt]), social]);
+  toast("Сохранить фото", 0, [...(sizePref() === "optimal" ? [opt, full] : [full, opt]), ...extra]);
+}
+
+// the faces lead a social crop when the frame is the photo's own (otherwise the frame's centre)
+function socialFocus() {
+  const own = isIdentity(REGISTRY.crop, app.pipeline.step("crop").values);
+  const idx = selectedFaces(app.pipeline.step("face_select").values), all = (own && app.analysis?.faces) || [];
+  return facesFocus(idx.length ? idx.map((i) => all[i]).filter(Boolean) : all);
+}
+
+// a «до → после» video for stories (the sharp preview is enough for 1080 px)
+async function saveVideo() {
+  hideToast();
+  $("busy").hidden = false;
+  toast("Готовлю видео…", 0);
+  try {
+    const key = app.detailWidth ? "detail" : "preview";
+    const { image, before } = await engine.render(key, app.pipeline.toJSON(), "always");
+    const focus = socialFocus();
+    const a = fit(image, FORMATS.story, focus), b = fit(before, FORMATS.story, focus);
+    $("busy").hidden = true;
+    savedFile = await record(b, a, app.name, (p) => {
+      $("toast").firstChild.textContent = `Записываю видео… ${Math.round(p * 100)}%`;
+    });
+    toast(`Видео готово · ${(savedFile.size / 1048576).toFixed(1)} МБ`, 0, [["Сохранить в Фото", shareSaved]]);
+  } catch (err) {
+    console.error(err);
+    toast("Не удалось сделать видео");
+  }
+  $("busy").hidden = true;
 }
 
 function saveSocial() {
@@ -1346,11 +1377,7 @@ async function exportPhoto(size, social = null) {
     engine.drop("full");
     let c;
     if (social) {
-      // the faces lead the crop when the frame is the photo's own (otherwise the frame's centre)
-      const own = isIdentity(REGISTRY.crop, app.pipeline.step("crop").values);
-      const idx = selectedFaces(app.pipeline.step("face_select").values), all = (own && app.analysis?.faces) || [];
-      const faces = idx.length ? idx.map((i) => all[i]).filter(Boolean) : all;
-      c = fit(image, FORMATS[social], facesFocus(faces));
+      c = fit(image, FORMATS[social], socialFocus());
     } else {
       c = document.createElement("canvas");
       c.width = image.width;
@@ -1486,5 +1513,5 @@ if ("serviceWorker" in navigator && !["localhost", "127.0.0.1"].includes(locatio
     }
   });
 }
-window.kirson = { app, engine, openFile }; // for scripted checks
+window.kirson = { app, engine, openFile, saved: () => savedFile }; // for scripted checks
 if (["localhost", "127.0.0.1"].includes(location.hostname)) import("./dev.js").then((m) => (window.kirson.dev = m));
