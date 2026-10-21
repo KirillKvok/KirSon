@@ -41,8 +41,12 @@ function resample(pts, step) {
 }
 
 // --- «Пластика»: push / shrink / enlarge ----------------------------------------------------
-export const LIQUIFY_MODES = ["Сдвиг", "Сузить", "Расширить", "Вернуть как было"];
+export const LIQUIFY_MODES = ["Сдвиг", "Сузить", "Расширить", "Вернуть как было", "Заморозить"];
 const RESTORE = 3; // the deformation made by earlier strokes fades back to the photo where it passes
+// «Заморозить»: painted places do not move at all — whatever strokes come before or after (an eye, a
+// hand, the line of a door next to the waist being pulled)
+export const FREEZE = 4;
+const MOVES = (s) => { const m = Math.round(s[0]); return m !== RESTORE && m !== FREEZE; };
 
 // `only`: the strokes to take (null = all); «Вернуть как было» always applies to what came before it
 export function buildField(strokes, w, h, only = null) {
@@ -50,6 +54,7 @@ export function buildField(strokes, w, h, only = null) {
   for (const s of strokes) {
     const mode = Math.round(s[0]), r = s[1] * long, k = Math.min(1, Math.max(0, s[2]));
     if (r < 1 || k <= 0) continue;
+    if (mode === FREEZE) continue;
     const pts = pathPx(s, w, h);
     if (mode === RESTORE) field.fade(pts, r, k);
     else if (only && !only.has(s)) continue;
@@ -92,13 +97,22 @@ function overPerson(s, person) {
 register("liquify", "Ручная пластика", [hidden("strokes", []), hidden("protect", 1)],
   (img, p, ctx) => {
     const strokes = strokesOf(p.strokes);
-    if (!strokes.length) return img;
+    if (!strokes.some(MOVES)) return img;
+    const { w, h } = img, frozen = rasterize(strokes, FREEZE, w, h);
+    const keep = frozen && I.mapPlane(frozen, (v) => 1 - v);
+    const warpOf = (only) => {
+      const wp = buildField(strokes, w, h, only).compute(w, h);
+      return wp && keep ? wp.attenuated(keep) : wp;
+    };
     const person = (p.protect ?? 1) ? personOf(img, ctx) : null;
-    const onPerson = new Set(person ? strokes.filter((s) => Math.round(s[0]) !== RESTORE && overPerson(s, person) >= 0.5) : []);
-    if (!onPerson.size) return buildField(strokes, img.w, img.h).apply(img);
-    const { w, h } = img, free = new Set(strokes.filter((s) => !onPerson.has(s)));
+    const onPerson = new Set(person ? strokes.filter((s) => MOVES(s) && overPerson(s, person) >= 0.5) : []);
+    if (!onPerson.size) {
+      const wp = warpOf(null);
+      return wp ? wp.apply(img) : img;
+    }
+    const free = new Set(strokes.filter((s) => MOVES(s) && !onPerson.has(s)));
     let out = img;
-    const wp = buildField(strokes, w, h, onPerson).compute(w, h);
+    const wp = warpOf(onPerson);
     if (wp) {
       // the person layer gets the whole warp, the background the same one fading out from the silhouette
       let dist = ctx.cache.get(`liquify_dist:${w}x${h}`);
@@ -123,7 +137,10 @@ register("liquify", "Ручная пластика", [hidden("strokes", []), hid
       out = { w, h, data };
     }
     // strokes over the background: everything moves
-    if (free.size && [...free].some((s) => Math.round(s[0]) !== RESTORE)) out = buildField(strokes, w, h, free).apply(out);
+    if (free.size) {
+      const fw = warpOf(free);
+      if (fw) out = fw.apply(out);
+    }
     return out;
   }, { category: BRUSH_TAB, active: (p) => strokesOf(p.strokes).length > 0 });
 

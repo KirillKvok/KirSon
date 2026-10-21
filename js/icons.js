@@ -83,6 +83,7 @@ const P = {
   thirds: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.2 4.5v15M14.8 4.5v15M3.5 9.5h17M3.5 14.5h17" opacity=".5"/><circle cx="14.8" cy="9.5" r="1.6" fill="currentColor"/>',
   grid: '<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.5"/>',
   undo: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4.5v4h4"/>',
+  snow: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/><path d="M9.5 4.5L12 7l2.5-2.5M9.5 19.5L12 17l2.5 2.5"/>',
   restore: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4.5v4h4"/><path d="M9 12.5c1-1.5 2-1.5 3 0s2 1.5 3 0"/>',
   mesh: '<path d="M3.5 7c3-1.5 5.5 1.5 8.5 0s5.5-1.5 8.5 0M3.5 12c3-2 5.5 2 8.5 0s5.5-2 8.5 0M3.5 17c3-1.5 5.5 1.5 8.5 0s5.5-1.5 8.5 0"/><path d="M7.5 3.5c-1 3 1.5 6 0 8.5s1 6 0 8.5M16.5 3.5c1 3-1.5 6 0 8.5s-1 6 0 8.5" opacity=".6"/>',
 };
@@ -118,7 +119,7 @@ const BY_KIND = {
   brushClear: "trash", liquifyGrid: "mesh", liquifyProtect: "shield", aspect: "rect", rotate: "rotate", flip: "flip", frameReset: "reset",
   presetSave: "plus", versionSave: "bookmark", compare: "grid", batch: "layers", enhance: "sparkle", bodyAuto: "sparkle", smartFrame: "thirds", videoEdit: "film", myPreset: "layers", preset: "layers",
 };
-const BRUSH = { liquify: ["push", "shrink", "expand", "restore"], heal: ["bandage"], mask_edit: ["shield", "brush", "person", "mountain"],
+const BRUSH = { liquify: ["push", "shrink", "expand", "restore", "snow"], heal: ["bandage"], mask_edit: ["shield", "brush", "person", "mountain"],
   skin: ["smooth", "grain"] };
 
 // colour of a colour choice (CSS), or null

@@ -14,7 +14,7 @@ import { labToRgb } from "./core/img.js";
 import { LOOKS as BASE_LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
 import { MORE_LOOKS, MORE_PRESETS } from "./core/styles.js";
 import { ASPECTS, rectOf, inscribedScale } from "./ops/crop.js";
-import { LIQUIFY_MODES, MASK_LAYERS, buildField, strokesOf } from "./ops/brushes.js";
+import { LIQUIFY_MODES, MASK_LAYERS, FREEZE, buildField, strokesOf, rasterize } from "./ops/brushes.js";
 import { SKIN_BRUSH_MODES } from "./ops/skin.js";
 import { selectedFaces } from "./ops/faces.js";
 import { objectKey } from "./ops/object.js";
@@ -748,6 +748,8 @@ function kindTool(t, b) {
     else if (t.kind === "aspect") setAspect(t.name);
     else if (t.kind === "brush") {
       Object.assign(app.brush, { tool: t.tool, mode: t.mode });
+      if (t.tool === "liquify" && t.mode === FREEZE) toast("Закрасьте то, что пластика не должна двигать, — оно станет красным", 3000);
+      if (t.tool === "liquify" && t.mode === 3) toast("Проведите там, где пластика лишняя, — фото вернётся к исходному", 3000);
       if (!app.tool || !["brushSize", "brushStrength"].includes(app.tool.kind))
         app.tool = TABS[app.tab].tools.find((x) => x.kind === "brushSize");
       drawOverlay();
@@ -1672,7 +1674,7 @@ function drawOverlay() {
     drawFaces(g, overlay.width, overlay.height);
     return;
   }
-  const skinBrush = app.brush.tool === "skin", grid = app.brush.tool === "liquify" && app.grid;
+  const skinBrush = app.brush.tool === "skin", grid = app.brush.tool === "liquify"; // grid lines and frozen places
   const on = brushTab() && (app.brush.tool === "mask_edit" || skinBrush || grid) && !view.hidden;
   overlay.hidden = !on;
   if (!on) return;
@@ -1710,7 +1712,23 @@ function drawWarpGrid(g, W, H) {
     const field = buildField(strokes, W, H), L = Math.max(W, H), cell = L / 22, step = Math.max(3, L / 240);
     const gain = field.empty ? 0 : field.gainFor(W, H);
     const [bx0, by0, bx1, by1] = field.empty ? [0, 0, 0, 0] : field.bounds();
-    const at = (x, y) => (gain && x >= bx0 && x <= bx1 && y >= by0 && y <= by1 ? field.at(x, y, gain) : [0, 0]);
+    const frozen = rasterize(strokes, FREEZE, W, H); // frozen places stay put, as in the render
+    const at = (x, y) => {
+      if (!gain || x < bx0 || x > bx1 || y < by0 || y > by1) return [0, 0];
+      const d = field.at(x, y, gain);
+      if (!frozen) return d;
+      const k = 1 - frozen.data[Math.min(H - 1, Math.round(y)) * W + Math.min(W - 1, Math.round(x))];
+      return [d[0] * k, d[1] * k];
+    };
+    let tint = null;
+    if (frozen) { // the frozen places in red, as in other editors
+      tint = document.createElement("canvas");
+      tint.width = W;
+      tint.height = H;
+      const id = tint.getContext("2d").createImageData(W, H);
+      for (let i = 0; i < W * H; i++) if (frozen.data[i] > 0.02) id.data.set([225, 60, 60, Math.round(95 * frozen.data[i])], 4 * i);
+      tint.getContext("2d").putImageData(id, 0, 0);
+    }
     const lines = [];
     for (let x = cell / 2; x < W; x += cell) {
       const ln = [];
@@ -1722,8 +1740,10 @@ function drawWarpGrid(g, W, H) {
       for (let x = 0; x <= W; x += step) { const d = at(x, y); ln.push(x + d[0], y + d[1]); }
       lines.push(ln);
     }
-    gridCache = { key, lines };
+    gridCache = { key, lines, tint };
   }
+  if (gridCache.tint) g.drawImage(gridCache.tint, 0, 0);
+  if (!app.grid) return;
   const t = Math.max(1, Math.max(W, H) / 900);
   for (const [width, colour] of [[t * 2.6, "rgba(0,0,0,0.28)"], [t, "rgba(255,255,255,0.75)"]]) {
     g.lineWidth = width;
