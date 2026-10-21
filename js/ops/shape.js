@@ -28,7 +28,9 @@ function pushCalibrated(field, pts, dirs, sigma, target) {
   pts.forEach((q, i) => { achieved += dot(probe.at(q[0], q[1], 1), dirs[i]); });
   achieved /= pts.length;
   if (achieved <= 1e-6) return;
-  const k = Math.min(Math.abs(target) / achieved, 4) * Math.sign(target);
+  // at most 4x the target (overlap can make `achieved` small); a cap of 4 *pixels* here made every
+  // slider stop at ~25 on the preview and shrink 2.4x on the full-size export («всё съехало»)
+  const k = Math.abs(target) * Math.min(1 / achieved, 4) * Math.sign(target);
   pts.forEach((q, i) => field.push(q, [dirs[i][0] * k, dirs[i][1] * k], sigma));
 }
 

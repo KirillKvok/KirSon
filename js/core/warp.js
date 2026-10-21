@@ -5,7 +5,9 @@
 // iteration, gain lowered automatically so the map never folds; applied with bilinear remap.
 import { resizeLinear, fimg } from "./img.js";
 
-const FIELD_STEP = 4, MIN_AREA = 0.35;
+// the grid is relative to the region (not pixels): the same warp — and the same fold guard — on the
+// preview and the full-size export (a 4 px minimum made the guard weaken faces differently by size)
+const FIELD_CELLS = 300, MIN_AREA = 0.35;
 
 export class Field {
   constructor() {
@@ -107,7 +109,7 @@ export class Field {
     const x0 = Math.max(bx0, 0), y0 = Math.max(by0, 0), x1 = Math.min(bx1, w), y1 = Math.min(by1, h);
     if (x1 <= x0 || y1 <= y0) return null;
     const rw = x1 - x0, rh = y1 - y0;
-    const step = Math.max(FIELD_STEP, Math.max(rw, rh) / 400);
+    const step = Math.max(0.5, Math.max(rw, rh) / FIELD_CELLS);
     const gw = Math.ceil(rw / step) + 1, gh = Math.ceil(rh / step) + 1;
     const gx = Float32Array.from({ length: gw }, (_, i) => x0 + ((x1 - 1 - x0) * i) / Math.max(1, gw - 1));
     const gy = Float32Array.from({ length: gh }, (_, j) => y0 + ((y1 - 1 - y0) * j) / Math.max(1, gh - 1));
