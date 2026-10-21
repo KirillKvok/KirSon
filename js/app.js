@@ -13,7 +13,7 @@ import { labToRgb } from "./core/img.js";
 import { LOOKS as BASE_LOOKS, BUILTIN, scaled as scaleLook } from "./core/presets.js";
 import { MORE_LOOKS, MORE_PRESETS } from "./core/styles.js";
 import { ASPECTS, rectOf, inscribedScale } from "./ops/crop.js";
-import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
+import { LIQUIFY_MODES, MASK_LAYERS, buildField, strokesOf } from "./ops/brushes.js";
 import { SKIN_BRUSH_MODES } from "./ops/skin.js";
 import { selectedFaces } from "./ops/faces.js";
 import { objectKey } from "./ops/object.js";
@@ -75,14 +75,19 @@ const TABS = [
   },
   {
     name: "Форма",
-    tools: [["face_shape", "slim"], ["face_shape", "jaw"], ["face_shape", "chin"], ["face_shape", "eyes"],
+    tools: [...[["face_shape", "slim"], ["face_shape", "jaw"], ["face_shape", "chin"], ["face_shape", "eyes"],
       ["face_shape", "eye_open"], ["face_shape", "nose"], ["face_shape", "lips"], ["face_shape", "smile"],
       ["face_shape", "symmetry"]].map(([op, param]) => ({ op, param })),
+      { kind: "shapeBrush", tool: "liquify", mode: 0, label: "Пластика кистью" },
+      { kind: "shapeBrush", tool: "liquify", mode: 3, label: "Вернуть как было" },
+    ],
   },
   {
     name: "Фигура",
     tools: [{ kind: "bodyAuto", label: "Авто" }, ...[["body", "waist"], ["body", "hips"], ["body", "legs"], ["body", "length"], ["body", "arms"],
-      ["body", "shoulders"], ["body", "neck"]].map(([op, param]) => ({ op, param }))],
+      ["body", "shoulders"], ["body", "neck"]].map(([op, param]) => ({ op, param })),
+      { kind: "shapeBrush", tool: "liquify", mode: 0, label: "Пластика кистью" },
+      { kind: "shapeBrush", tool: "liquify", mode: 3, label: "Вернуть как было" }],
   },
   {
     name: "Макияж",
@@ -133,6 +138,7 @@ const TABS = [
       ...MASK_LAYERS.map((label, mode) => ({ kind: "brush", tool: "mask_edit", mode, label })),
       { kind: "brushSize", label: "Размер кисти" },
       { kind: "brushStrength", label: "Сила кисти" },
+      { kind: "liquifyGrid", label: "Сетка" },
       { kind: "brushClear", label: "Стереть мазки" },
     ],
   },
@@ -176,6 +182,7 @@ const app = {
   tool: null,       // current slider tool {op, param, label}
   aspect: "Свободно", // crop frame proportions
   brush: { tool: "liquify", mode: 0, size: 25, strength: 50 },
+  grid: (() => { try { return localStorage.getItem("kirson-grid") !== "0"; } catch { return true; } })(), // the liquify grid
   versions: [],     // [{name, state, thumb}] of this photo (kept in the session)
   split: false,     // before / after divider on the photo
   splitPos: 0.5,
@@ -769,7 +776,7 @@ function kindTool(t, b) {
       drawOverlay();
       toast("Правки — для всех лиц", 2000);
     }
-    else if (t.kind === "faceBrush") { // to «Кисти» with this brush
+    else if (t.kind === "faceBrush" || t.kind === "shapeBrush") { // to «Кисти» with this brush
       app.brush.tool = t.tool;
       app.brush.mode = t.mode;
       if (t.tool === "heal") app.brush.size = Math.min(app.brush.size, 8); // a spot: a small brush
@@ -777,10 +784,18 @@ function kindTool(t, b) {
       app.tool = TABS[app.tab].tools.find((x) => x.kind === "brushSize");
       renderTools();
       $("tools").querySelector(".tool.on")?.scrollIntoView({ inline: "center", block: "nearest" }); // the chosen brush in view
-      toast(t.tool === "heal" ? "Коснитесь пятна пальцем — оно исчезнет. Два пальца — приблизить"
-        : t.mode === 0 ? "Проведите пальцем там, где сгладить кожу. Два пальца — приблизить"
-          : "Проведите там, где сглаживание не нужно: родинка, ресницы, контур губ", 3500);
+      toast(t.tool === "liquify" ? (t.mode === 3 ? "Проведите там, где пластика лишняя, — фото вернётся к исходному"
+        : "Ведите пальцем — фото тянется за ним. Рядом: «Сузить», «Расширить», «Вернуть как было»")
+        : t.tool === "heal" ? "Коснитесь пятна пальцем — оно исчезнет. Два пальца — приблизить"
+          : t.mode === 0 ? "Проведите пальцем там, где сгладить кожу. Два пальца — приблизить"
+            : "Проведите там, где сглаживание не нужно: родинка, ресницы, контур губ", 3500);
       return;
+    }
+    else if (t.kind === "liquifyGrid") {
+      app.grid = !app.grid;
+      try { localStorage.setItem("kirson-grid", app.grid ? "1" : "0"); } catch { /* private mode */ }
+      if (app.grid && app.brush.tool !== "liquify") toast("Сетка видна, пока выбрана пластика", 2500);
+      drawOverlay();
     }
     else if (t.kind === "brushClear") {
       app.pipeline.step(app.brush.tool).values[brushParam()] = [];
@@ -808,6 +823,7 @@ function kindTool(t, b) {
   }
   if (t.kind === "brush" && app.brush.tool === t.tool && app.brush.mode === t.mode) b.classList.add("on");
   if ((t.kind === "brushSize" || t.kind === "brushStrength") && app.tool === t) b.classList.add("on");
+  if (t.kind === "liquifyGrid" && app.grid) b.classList.add("on");
 }
 
 // filter buttons show the photo with that filter (a 64 px square around the face), made once per photo
@@ -897,6 +913,8 @@ const TIPS = {
   "freckles.amount": "Влево — убрать веснушки, вправо — добавить естественные на нос и щёки.",
   bodyAuto: "Мягко подправит только те части фигуры, что видны в кадре.",
   faceBrush: "Сглаживание и пятна вручную: проведите пальцем там, где нужно, — или где сглаживание лишнее.",
+  shapeBrush: "Пластика пальцем: тяните, сужайте, расширяйте где угодно. «Вернуть как было» убирает лишнее.",
+  liquifyGrid: "Сетка показывает, где и насколько фото деформировано пластикой.",
   smartFrame: "Кадрирует по правилам портрета: глаза на верхней трети, место по направлению взгляда.",
   "btn-video": "Ретушь видео до 15 секунд: кожа, тон и цвет в каждом кадре, звук сохраняется.",
   "btn-camera": "Камера подскажет, как встать к свету и держать телефон, — и снимет лучший кадр.",
@@ -1446,7 +1464,12 @@ function moveStroke(cx, cy) {
   stroke.push(x, y);
   app.pipeline.step(app.brush.tool).values[brushParam()] = [...strokesOfTool()]; // a new array: re-render
   if (app.brush.tool !== "heal") requestRender();
-  drawOverlay();
+  if (app.brush.tool === "liquify") overlaySoon(); // the grid: ~10 times a second is enough while drawing
+  else drawOverlay();
+}
+let overlayTimer = 0;
+function overlaySoon() {
+  if (!overlayTimer) overlayTimer = setTimeout(() => { overlayTimer = 0; drawOverlay(); }, 90);
 }
 
 function endStroke() {
@@ -1456,6 +1479,7 @@ function endStroke() {
   app.dragging = false;
   pushHistory(); // one stroke = one undo step
   requestRender();
+  drawOverlay();
 }
 
 function cancelStroke() {
@@ -1636,8 +1660,8 @@ function drawOverlay() {
     drawFaces(g, overlay.width, overlay.height);
     return;
   }
-  const skinBrush = app.brush.tool === "skin";
-  const on = brushTab() && (app.brush.tool === "mask_edit" || skinBrush) && !view.hidden;
+  const skinBrush = app.brush.tool === "skin", grid = app.brush.tool === "liquify" && app.grid;
+  const on = brushTab() && (app.brush.tool === "mask_edit" || skinBrush || grid) && !view.hidden;
   overlay.hidden = !on;
   if (!on) return;
   overlay.width = view.width;
@@ -1646,6 +1670,7 @@ function drawOverlay() {
     left: `${view.offsetLeft}px`, top: `${view.offsetTop}px` });
   const g = overlay.getContext("2d"), W = overlay.width, H = overlay.height, L = Math.max(W, H);
   g.clearRect(0, 0, W, H);
+  if (grid) return drawWarpGrid(g, W, H);
   g.lineCap = g.lineJoin = "round";
   const list = skinBrush ? app.pipeline.step("skin").values.brush || [] : app.pipeline.step("mask_edit").values.strokes || [];
   for (const s of list) {
@@ -1660,6 +1685,42 @@ function drawOverlay() {
       continue;
     }
     for (let i = 5; i + 1 < s.length; i += 2) g.lineTo(s[i] * W, s[i + 1] * H);
+    g.stroke();
+  }
+}
+
+// The deformation grid of «Пластика»: straight lines of the photo carried by the same field the render
+// uses (forward: a point of the photo goes to p + D(p)), so bends show where and how much it moved.
+let gridCache = { key: "", lines: null };
+function drawWarpGrid(g, W, H) {
+  const strokes = strokesOf(app.pipeline.step("liquify").values.strokes), key = `${W}x${H}:${JSON.stringify(strokes)}`;
+  if (gridCache.key !== key) {
+    const field = buildField(strokes, W, H), L = Math.max(W, H), cell = L / 22, step = Math.max(3, L / 240);
+    const gain = field.empty ? 0 : field.gainFor(W, H);
+    const [bx0, by0, bx1, by1] = field.empty ? [0, 0, 0, 0] : field.bounds();
+    const at = (x, y) => (gain && x >= bx0 && x <= bx1 && y >= by0 && y <= by1 ? field.at(x, y, gain) : [0, 0]);
+    const lines = [];
+    for (let x = cell / 2; x < W; x += cell) {
+      const ln = [];
+      for (let y = 0; y <= H; y += step) { const d = at(x, y); ln.push(x + d[0], y + d[1]); }
+      lines.push(ln);
+    }
+    for (let y = cell / 2; y < H; y += cell) {
+      const ln = [];
+      for (let x = 0; x <= W; x += step) { const d = at(x, y); ln.push(x + d[0], y + d[1]); }
+      lines.push(ln);
+    }
+    gridCache = { key, lines };
+  }
+  const t = Math.max(1, Math.max(W, H) / 900);
+  for (const [width, colour] of [[t * 2.6, "rgba(0,0,0,0.28)"], [t, "rgba(255,255,255,0.75)"]]) {
+    g.lineWidth = width;
+    g.strokeStyle = colour;
+    g.beginPath();
+    for (const ln of gridCache.lines) {
+      g.moveTo(ln[0], ln[1]);
+      for (let i = 2; i < ln.length; i += 2) g.lineTo(ln[i], ln[i + 1]);
+    }
     g.stroke();
   }
 }

@@ -13,7 +13,38 @@ export class Field {
   constructor() {
     this.pushes = [];
     this.scales = [];
+    this.fades = [];
     this.gain = 1;
+  }
+
+  // the deformation made so far (every push / scale added before this call) fades back towards the
+  // original along the path `pts` (px): fully within 0.4·r of it, not at all from r, by `k` (0..1)
+  fade(pts, r, k) {
+    if (!(k > 0) || r < 1 || !pts.length) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) {
+      x0 = Math.min(x0, x - r); y0 = Math.min(y0, y - r);
+      x1 = Math.max(x1, x + r); y1 = Math.max(y1, y + r);
+    }
+    this.fades.push({ np: this.pushes.length, ns: this.scales.length, pts, r, k: Math.min(1, k), box: [x0, y0, x1, y1] });
+  }
+
+  // 0..1: how much of the earlier deformation one fade takes away at (x, y)
+  static _fadeAt(f, x, y) {
+    const [x0, y0, x1, y1] = f.box;
+    if (x < x0 || y < y0 || x > x1 || y > y1) return 0;
+    let d2 = Infinity;
+    const p = f.pts;
+    if (p.length === 1) d2 = (x - p[0][0]) ** 2 + (y - p[0][1]) ** 2;
+    for (let i = 0; i + 1 < p.length; i++) { // distance to the path, segment by segment
+      const [ax, ay] = p[i], [bx, by] = p[i + 1], vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy;
+      const t = l2 > 0 ? Math.min(1, Math.max(0, ((x - ax) * vx + (y - ay) * vy) / l2)) : 0;
+      d2 = Math.min(d2, (x - ax - t * vx) ** 2 + (y - ay - t * vy) ** 2);
+    }
+    let t = (f.r - Math.sqrt(d2)) / (0.6 * f.r);
+    if (t <= 0) return 0;
+    if (t > 1) t = 1;
+    return f.k * t * t * (3 - 2 * t);
   }
 
   push(q, d, sigma) {
@@ -49,17 +80,40 @@ export class Field {
 
   // forward displacement at (x, y) -> [dx, dy] (times gain)
   at(x, y, gain = this.gain) {
-    let Dx = 0, Dy = 0;
-    for (const [qx, qy, dx, dy, s] of this.pushes) {
-      const w = Math.exp(-((x - qx) ** 2 + (y - qy) ** 2) / (2 * s * s));
+    // fades: a primitive is weakened by every fade added after it (the product of what they leave)
+    const nf = this.fades.length;
+    let keep = null;
+    if (nf) {
+      keep = new Float64Array(nf + 1);
+      keep[nf] = 1;
+      for (let j = nf - 1; j >= 0; j--) keep[j] = keep[j + 1] * (1 - Field._fadeAt(this.fades[j], x, y));
+    }
+    let Dx = 0, Dy = 0, j = 0, factor = keep ? keep[0] : 1;
+    for (let i = 0; i < this.pushes.length; i++) {
+      if (keep) {
+        while (j < nf && this.fades[j].np <= i) j++;
+        factor = keep[j];
+        if (factor <= 0) continue;
+      }
+      const [qx, qy, dx, dy, s] = this.pushes[i];
+      const r2 = (x - qx) ** 2 + (y - qy) ** 2;
+      if (r2 > 12.25 * s * s) continue; // beyond 3.5 sigma (the bounds): < 0.22 %
+      const w = Math.exp(-r2 / (2 * s * s)) * factor;
       Dx += dx * w;
       Dy += dy * w;
     }
-    for (const [cx, cy, k, R, ax] of this.scales) {
+    j = 0;
+    for (let i = 0; i < this.scales.length; i++) {
+      if (keep) {
+        while (j < nf && this.fades[j].ns <= i) j++;
+        factor = keep[j];
+        if (factor <= 0) continue;
+      }
+      const [cx, cy, k, R, ax] = this.scales[i];
       const dx = x - cx, dy = y - cy;
       let t = 1 - (dx * dx + dy * dy) / (R * R);
       if (t <= 0) continue;
-      t *= t;
+      t *= t * factor;
       if (!ax) {
         Dx += k * t * dx;
         Dy += k * t * dy;
@@ -70,6 +124,19 @@ export class Field {
       }
     }
     return [Dx * gain, Dy * gain];
+  }
+
+  // the fold guard's gain for an image of w x h on a coarser grid (the deformation grid drawn over the
+  // photo: the same picture as the render, cheaply)
+  gainFor(w, h, cells = 60) {
+    if (this.empty) return 0;
+    const [bx0, by0, bx1, by1] = this.bounds();
+    const x0 = Math.max(bx0, 0), y0 = Math.max(by0, 0), x1 = Math.min(bx1, w), y1 = Math.min(by1, h);
+    if (x1 <= x0 || y1 <= y0) return 0;
+    const n = Math.max(2, Math.round((cells * Math.max(x1 - x0, y1 - y0)) / Math.max(w, h)));
+    const gx = Float32Array.from({ length: n }, (_, i) => x0 + ((x1 - 1 - x0) * i) / (n - 1));
+    const gy = Float32Array.from({ length: n }, (_, i) => y0 + ((y1 - 1 - y0) * i) / (n - 1));
+    return (this.gain = this._safeGain(gx, gy));
   }
 
   // largest gain <= 1 keeping det(Jacobian) >= MIN_AREA everywhere on the grid

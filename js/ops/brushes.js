@@ -40,7 +40,8 @@ function resample(pts, step) {
 }
 
 // --- «Пластика»: push / shrink / enlarge ----------------------------------------------------
-export const LIQUIFY_MODES = ["Сдвиг", "Сузить", "Расширить"];
+export const LIQUIFY_MODES = ["Сдвиг", "Сузить", "Расширить", "Вернуть как было"];
+const RESTORE = 3; // the deformation made by earlier strokes fades back to the photo where it passes
 
 export function buildField(strokes, w, h) {
   const field = new Field(), long = Math.max(w, h);
@@ -48,7 +49,8 @@ export function buildField(strokes, w, h) {
     const mode = Math.round(s[0]), r = s[1] * long, k = Math.min(1, Math.max(0, s[2]));
     if (r < 1 || k <= 0) continue;
     const pts = pathPx(s, w, h);
-    if (mode === 0) {
+    if (mode === RESTORE) field.fade(pts, r, k);
+    else if (mode === 0) {
       const path = resample(pts, r * PUSH_SPACING);
       for (let i = 0; i + 1 < path.length; i++) {
         const a = path[i], b = path[i + 1];
