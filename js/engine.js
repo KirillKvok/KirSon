@@ -91,7 +91,9 @@ export class Engine {
     this.busy = true;
     try {
       const { image, ms, before } = await this.render(job.key, job.state, job.before);
-      if (!this.pending && this.onPreview) this.onPreview(image, ms, before, job.key);
+      // shown even when a newer request waits: it is newer than what is on screen (while a slider moves,
+      // skipping it left the photo frozen until the finger lifted)
+      if (this.onPreview) this.onPreview(image, ms, before, job.key);
     } catch (err) {
       console.error(err);
     }

@@ -116,7 +116,8 @@ const BY_KIND = {
   brushClear: "trash", aspect: "rect", rotate: "rotate", flip: "flip", frameReset: "reset",
   presetSave: "plus", versionSave: "bookmark", compare: "grid", batch: "layers", enhance: "sparkle", bodyAuto: "sparkle", smartFrame: "thirds", videoEdit: "film", myPreset: "layers", preset: "layers",
 };
-const BRUSH = { liquify: ["push", "shrink", "expand"], heal: ["bandage"], mask_edit: ["shield", "brush", "person", "mountain"] };
+const BRUSH = { liquify: ["push", "shrink", "expand"], heal: ["bandage"], mask_edit: ["shield", "brush", "person", "mountain"],
+  skin: ["smooth", "grain"] };
 
 // colour of a colour choice (CSS), or null
 export function swatchFor(t, colors) {
@@ -125,7 +126,7 @@ export function swatchFor(t, colors) {
 }
 
 export function iconFor(t) {
-  if (t.kind === "brush") return svg(BRUSH[t.tool]?.[t.mode] || "brush");
+  if (t.kind === "brush" || t.kind === "faceBrush") return svg(BRUSH[t.tool]?.[t.mode] || "brush");
   if (t.kind === "look") return null; // looks get a glass orb (CSS)
   if (t.kind) return svg(BY_KIND[t.kind] || "slider");
   return svg(BY_PARAM[`${t.op}.${t.param}`] || "slider");

@@ -14,6 +14,7 @@ import { LOOKS as BASE_LOOKS, BUILTIN, scaled as scaleLook } from "./core/preset
 import { MORE_LOOKS, MORE_PRESETS } from "./core/styles.js";
 import { ASPECTS, rectOf, inscribedScale } from "./ops/crop.js";
 import { LIQUIFY_MODES, MASK_LAYERS } from "./ops/brushes.js";
+import { SKIN_BRUSH_MODES } from "./ops/skin.js";
 import { selectedFaces } from "./ops/faces.js";
 import { objectKey } from "./ops/object.js";
 import { Engine } from "./engine.js";
@@ -64,6 +65,9 @@ const TABS = [
       ["teeth_eyes", "teeth"], ["teeth_eyes", "sclera"], ["teeth_eyes", "iris"], ["skin", "texture"],
       ["skin_natural", "texture"], ["skin_natural", "volume"], ["skin", "body"]].map(([op, param]) => ({ op, param })),
       ...LIGHT_DIRS.map((n, k) => ({ op: "relight", param: "dir", option: k, label: `Свет: ${n.toLowerCase()}` })),
+      // by hand, on «Кисти»: the smoothing where she wants it, a spot taken away
+      ...SKIN_BRUSH_MODES.map((label, mode) => ({ kind: "faceBrush", tool: "skin", mode, label })),
+      { kind: "faceBrush", tool: "heal", mode: 0, label: "Убрать пятно кистью" },
       { kind: "facePick", label: "Выбрать лицо" },
       { kind: "faceAll", label: "Все лица" },
     ],
@@ -123,6 +127,7 @@ const TABS = [
     name: "Кисти",
     tools: [
       ...LIQUIFY_MODES.map((label, mode) => ({ kind: "brush", tool: "liquify", mode, label })),
+      ...SKIN_BRUSH_MODES.map((label, mode) => ({ kind: "brush", tool: "skin", mode, label })),
       { kind: "brush", tool: "heal", mode: 0, label: "Заплатка" },
       ...MASK_LAYERS.map((label, mode) => ({ kind: "brush", tool: "mask_edit", mode, label })),
       { kind: "brushSize", label: "Размер кисти" },
@@ -763,8 +768,21 @@ function kindTool(t, b) {
       drawOverlay();
       toast("Правки — для всех лиц", 2000);
     }
+    else if (t.kind === "faceBrush") { // to «Кисти» with this brush
+      app.brush.tool = t.tool;
+      app.brush.mode = t.mode;
+      if (t.tool === "heal") app.brush.size = Math.min(app.brush.size, 8); // a spot: a small brush
+      selectTab(TABS.findIndex((x) => x.name === "Кисти"));
+      app.tool = TABS[app.tab].tools.find((x) => x.kind === "brushSize");
+      renderTools();
+      $("tools").querySelector(".tool.on")?.scrollIntoView({ inline: "center", block: "nearest" }); // the chosen brush in view
+      toast(t.tool === "heal" ? "Коснитесь пятна пальцем — оно исчезнет. Два пальца — приблизить"
+        : t.mode === 0 ? "Проведите пальцем там, где сгладить кожу. Два пальца — приблизить"
+          : "Проведите там, где сглаживание не нужно: родинка, ресницы, контур губ", 3500);
+      return;
+    }
     else if (t.kind === "brushClear") {
-      app.pipeline.step(app.brush.tool).values.strokes = [];
+      app.pipeline.step(app.brush.tool).values[brushParam()] = [];
       pushHistory();
       requestRender();
       drawOverlay();
@@ -877,6 +895,7 @@ const TIPS = {
   "makeup.iris": "Новый цвет глаз — рисунок радужки и блик сохраняются.",
   "freckles.amount": "Влево — убрать веснушки, вправо — добавить естественные на нос и щёки.",
   bodyAuto: "Мягко подправит только те части фигуры, что видны в кадре.",
+  faceBrush: "Сглаживание и пятна вручную: проведите пальцем там, где нужно, — или где сглаживание лишнее.",
   smartFrame: "Кадрирует по правилам портрета: глаза на верхней трети, место по направлению взгляда.",
   "btn-video": "Ретушь видео до 15 секунд: кожа, тон и цвет в каждом кадре, звук сохраняется.",
   "btn-camera": "Камера подскажет, как встать к свету и держать телефон, — и снимет лучший кадр.",
@@ -1117,13 +1136,20 @@ function previewState() {
   return st;
 }
 
+// While a slider moves, the full-quality preview is kept when this device renders it fast enough (the
+// 640 px quick copy, stretched over the screen, made the whole face look blurred and hard to judge);
+// only slow renders fall back to the quick copy. Times are learned from the last renders per key.
+const renderMs = {};
+const SHARP_WHILE_DRAGGING_MS = 900;
 function requestRender() {
   if (!app.preview) return;
-  const key = app.dragging ? "fast" : zoom.s > 1.5 && app.detailWidth ? "detail" : "preview";
+  const full = zoom.s > 1.5 && app.detailWidth ? "detail" : "preview";
+  const key = app.dragging && (renderMs[full] ?? 0) > SHARP_WHILE_DRAGGING_MS ? "fast" : full;
   engine.preview(key, previewState(), app.split ? "always" : true);
 }
 
 engine.onPreview = (image, ms, before, key) => {
+  if (key !== "fast") renderMs[key] = renderMs[key] === undefined ? ms : renderMs[key] * 0.6 + ms * 0.4;
   app.result = image;
   app.before = before;
   if (app.thumbFor && key !== "fast" && snapshot() === app.thumbFor.state) {
@@ -1383,15 +1409,17 @@ function previewRing() {
   }, 1200);
 }
 
+// the hidden parameter holding a brush tool's strokes («Кожа» keeps its own as `brush`)
+const brushParam = () => (app.brush.tool === "skin" ? "brush" : "strokes");
 function strokesOfTool() {
-  const st = app.pipeline.step(app.brush.tool);
-  return (st.values.strokes ||= []);
+  const st = app.pipeline.step(app.brush.tool), k = brushParam();
+  return (st.values[k] ||= []);
 }
 
 function startStroke(cx, cy) {
   const [x, y] = toPhoto(cx, cy);
   stroke = [app.brush.mode, brushRadius(), app.brush.strength / 100, x, y];
-  app.pipeline.step(app.brush.tool).values.strokes = [...strokesOfTool(), stroke];
+  app.pipeline.step(app.brush.tool).values[brushParam()] = [...strokesOfTool(), stroke];
   app.dragging = app.brush.tool !== "heal"; // the patch looks right only in full quality
   showRing(cx, cy);
   requestRender();
@@ -1404,7 +1432,7 @@ function moveStroke(cx, cy) {
   const [x, y] = toPhoto(cx, cy), n = stroke.length;
   if (Math.hypot(x - stroke[n - 2], y - stroke[n - 1]) < stroke[1] * 0.08) return; // jitter
   stroke.push(x, y);
-  app.pipeline.step(app.brush.tool).values.strokes = [...strokesOfTool()]; // a new array: re-render
+  app.pipeline.step(app.brush.tool).values[brushParam()] = [...strokesOfTool()]; // a new array: re-render
   if (app.brush.tool !== "heal") requestRender();
   drawOverlay();
 }
@@ -1422,7 +1450,7 @@ function cancelStroke() {
   ring.hidden = true;
   if (!stroke) return;
   const list = strokesOfTool();
-  app.pipeline.step(app.brush.tool).values.strokes = list.filter((s) => s !== stroke);
+  app.pipeline.step(app.brush.tool).values[brushParam()] = list.filter((s) => s !== stroke);
   stroke = null;
   app.dragging = false;
   requestRender();
@@ -1431,6 +1459,7 @@ function cancelStroke() {
 
 // painted mask corrections, tinted by layer, while the «Маски» brushes are selected
 const LAYER_COLORS = ["rgba(230,60,60,0.38)", "rgba(250,200,60,0.38)", "rgba(90,200,90,0.38)", "rgba(60,140,230,0.38)"];
+const SKIN_COLORS = ["rgba(90,200,120,0.32)", "rgba(230,80,80,0.32)"]; // smooth here / keep the texture here
 const objectConfs = new Map(); // tapped point -> magic-touch mask (for the outline)
 
 async function pickObject(x, y) {
@@ -1595,7 +1624,8 @@ function drawOverlay() {
     drawFaces(g, overlay.width, overlay.height);
     return;
   }
-  const on = brushTab() && app.brush.tool === "mask_edit" && !view.hidden;
+  const skinBrush = app.brush.tool === "skin";
+  const on = brushTab() && (app.brush.tool === "mask_edit" || skinBrush) && !view.hidden;
   overlay.hidden = !on;
   if (!on) return;
   overlay.width = view.width;
@@ -1605,8 +1635,9 @@ function drawOverlay() {
   const g = overlay.getContext("2d"), W = overlay.width, H = overlay.height, L = Math.max(W, H);
   g.clearRect(0, 0, W, H);
   g.lineCap = g.lineJoin = "round";
-  for (const s of app.pipeline.step("mask_edit").values.strokes || []) {
-    g.strokeStyle = g.fillStyle = LAYER_COLORS[s[0]] || LAYER_COLORS[0];
+  const list = skinBrush ? app.pipeline.step("skin").values.brush || [] : app.pipeline.step("mask_edit").values.strokes || [];
+  for (const s of list) {
+    g.strokeStyle = g.fillStyle = skinBrush ? SKIN_COLORS[s[0]] || SKIN_COLORS[0] : LAYER_COLORS[s[0]] || LAYER_COLORS[0];
     const r = s[1] * L;
     g.lineWidth = 2 * r;
     g.beginPath();

@@ -1,5 +1,6 @@
 // Skin retouch, naturalness, teeth & eyes — port of kirson/core/ops/skin.py.
-import { register, P } from "../core/pipeline.js";
+import { register, P, hidden } from "../core/pipeline.js";
+import { rasterize, strokesOf } from "./brushes.js";
 import * as I from "../core/img.js";
 import { components, dilate, erode, median255 } from "../core/draw.js";
 import { getMask, refFaceWidth } from "../face/masks.js";
@@ -41,17 +42,32 @@ export function blemishMask(low, skin, fw) {
   return m;
 }
 
+// The smoothing brush (hidden `brush` strokes, mode 0 = smooth here, 1 = keep the texture here): the
+// automatic smoothing made exact by hand — more where she wants it (even with the slider at 0), none
+// where she does not (a mole, lashes, the lip line).
+export const SKIN_BRUSH_MODES = ["Сгладить кистью", "Вернуть текстуру"];
+const BRUSH_SMOOTH = 0.65; // the smoothing a full-strength stroke adds
+
 register("skin", "Кожа", [P("smooth", "Сглаживание", 0, 100, 0), P("texture", "Текстура", 0, 100, 100),
-  P("blemish", "Прыщи и пятна", 0, 100, 0), P("body", "Кожа тела", 0, 100, 50)], (img, p, ctx) => {
+  P("blemish", "Прыщи и пятна", 0, 100, 0), P("body", "Кожа тела", 0, 100, 50), hidden("brush", [])], (img, p, ctx) => {
   const fw = refFaceWidth(img, ctx);
   let mask = getMask(img, ctx, "face_skin");
   if (p.body > 0) {
     const body = getMask(img, ctx, "body_skin"), k = p.body / 100;
     mask = I.mapPlane(mask, (v, i) => Math.max(v, body.data[i] * k));
   }
-  const b = I.bbox(mask, Math.round(fw * 0.1));
+  const strokes = strokesOf(p.brush);
+  const add = rasterize(strokes, 0, img.w, img.h), keep = rasterize(strokes, 1, img.w, img.h);
+  // the smoothing per pixel: the slider inside the skin, the brush on top, «keep» taking it away
+  const amount = I.mapPlane(mask, (v, i) => {
+    let s = v * (p.smooth / 100);
+    if (add) s = Math.max(s, add.data[i] * BRUSH_SMOOTH);
+    if (keep) s *= 1 - keep.data[i];
+    return s;
+  });
+  const b = I.bbox(I.mapPlane(mask, (v, i) => Math.max(v, add ? add.data[i] : 0)), Math.round(fw * 0.1));
   if (!b) return img;
-  const m = I.crop(mask, b), f = I.cropFloat(img, b), { w, h } = f;
+  const m = I.crop(mask, b), sm = I.crop(amount, b), f = I.cropFloat(img, b), { w, h } = f;
 
   const low = I.gaussian(f, Math.max(0.6, fw * 0.004));
   const fine = I.fimg(w, h, 3);
@@ -83,12 +99,12 @@ register("skin", "Кожа", [P("smooth", "Сглаживание", 0, 100, 0), 
   const clean = I.fimg(w, h, 3);
   for (let i = 0; i < clean.data.length; i++) clean.data[i] = low.data[i] + fine.data[i];
 
-  if (p.smooth > 0) {
+  if (p.smooth > 0 || add) {
     const ws = Math.min(1, WORK_FACE / fw);
     const base = I.guidedFast(I.luminance(low), low, fw * SMOOTH_RADIUS, SMOOTH_EPS, ws);
-    const tk = MIN_TEXTURE + ((1 - MIN_TEXTURE) * p.texture) / 100, sk = p.smooth / 100;
+    const tk = MIN_TEXTURE + ((1 - MIN_TEXTURE) * p.texture) / 100;
     for (let i = 0; i < w * h; i++) {
-      const s = m.data[i] * sk;
+      const s = sm.data[i];
       if (s <= 0) continue;
       for (let c = 0; c < 3; c++) {
         const j = 3 * i + c;
@@ -97,7 +113,7 @@ register("skin", "Кожа", [P("smooth", "Сглаживание", 0, 100, 0), 
     }
   }
   return I.withPart(img, I.clamp01(clean), b);
-}, { category: FACE_TAB, active: (p) => p.smooth > 0 || p.blemish > 0 });
+}, { category: FACE_TAB, active: (p) => p.smooth > 0 || p.blemish > 0 || strokesOf(p.brush).length > 0 });
 
 register("skin_natural", "Естественность", [P("texture", "Текстура кожи (поры)", 0, 100, 0),
   P("volume", "Естественные тени и объём", 0, 100, 0)], (img, p, ctx) => {
