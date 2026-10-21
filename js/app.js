@@ -158,7 +158,7 @@ const TABS = [
   {
     name: "Коррекция",
     tools: [{ kind: "enhance", label: "Улучшить качество" }, ...[["light", "shadows"], ["light", "highlights"], ["brightness", "amount"], ["contrast", "amount"],
-      ["color", "saturation"], ["color", "vibrance"], ["color", "temperature"], ["color", "tint"],
+      ["color", "skin_wb"], ["color", "saturation"], ["color", "vibrance"], ["color", "temperature"], ["color", "tint"],
       ["sharpen", "sharpness"], ["sharpen", "clarity"]].map(([op, param]) => ({ op, param }))],
   },
   {
@@ -920,6 +920,7 @@ const TIPS = {
   "makeup.mascara": "Ресницы темнее и гуще — кожа века не красится.",
   "makeup.highlight": "Перламутровый блеск на скулах, носу и над губой.",
   "makeup.iris": "Новый цвет глаз — рисунок радужки и блик сохраняются.",
+  "color.skin_wb": "Убирает цветной отлив лампы по цвету кожи: лицо и всё фото — как при дневном свете.",
   "freckles.amount": "Влево — убрать веснушки, вправо — добавить естественные на нос и щёки.",
   bodyAuto: "Мягко подправит только те части фигуры, что видны в кадре.",
   faceBrush: "Сглаживание и пятна вручную: проведите пальцем там, где нужно, — или где сглаживание лишнее.",

@@ -110,9 +110,59 @@ register("light", "Свет и тени", [P("shadows", "Тени", -100, 100, 0
     });
   });
 
+// «Баланс по коже»: the light of the room tints everything, and faces show it best. The face skin of the
+// photo as it came (median Lab of its confident part) is turned to the hue of natural skin under daylight,
+// keeping its own lightness and chroma; the same channel gains go to the whole photo (a white balance).
+// iPhone photos: skin hue 46..59° (median 55), under a violet lamp 43° — so the target is 55° and casts
+// within 3° are left alone. Gains at most ±15 %.
+const SKIN_HUE = 55, HUE_OK = 3, MAX_GAIN = 0.15;
+
+export function skinCast(img, ctx) {
+  const src = ctx.cache.get("_source") || img;
+  const key = `skin_wb:${src.w}x${src.h}`, hit = ctx.cache.get(key);
+  if (hit && hit[0] === src && hit[1] === ctx.cache.get("analysis")) return hit[2];
+  let res = null;
+  try {
+    if (ctx.cache.has("analysis")) {
+      const m = getMask(src, ctx, "face_skin"), idx = [];
+      for (let i = 0; i < m.data.length; i += 3) if (m.data[i] > 0.8) idx.push(i);
+      if (idx.length > 200) {
+        const f = I.fimg(idx.length, 1, 3);
+        idx.forEach((i, k) => { for (let c = 0; c < 3; c++) f.data[3 * k + c] = src.data[3 * i + c] / 255; });
+        const lab = I.rgbToLab(f), med = (c) => {
+          const v = new Float32Array(idx.length);
+          for (let k = 0; k < idx.length; k++) v[k] = lab.data[3 * k + c];
+          v.sort();
+          return v[v.length >> 1];
+        };
+        const L = med(0), a = med(1), b = med(2), hue = (Math.atan2(b, a) * 180) / Math.PI;
+        const chroma = Math.min(28, Math.max(15, Math.hypot(a, b)));
+        res = { hue, gains: [1, 1, 1] };
+        if (Math.abs(hue - SKIN_HUE) > HUE_OK) {
+          const h = (SKIN_HUE * Math.PI) / 180;
+          const pair = I.labToRgb(I.fimg(2, 1, 3, Float32Array.from([L, a, b, L, chroma * Math.cos(h), chroma * Math.sin(h)])));
+          res.gains = [0, 1, 2].map((c) => Math.min(1 + MAX_GAIN, Math.max(1 - MAX_GAIN, pair.data[3 + c] / Math.max(1e-3, pair.data[c]))));
+        }
+      }
+    }
+  } catch { /* no face: nothing to balance by */ }
+  ctx.cache.set(key, [src, ctx.cache.get("analysis"), res]);
+  return res;
+}
+
 register("color", "Цвет", [P("saturation", "Насыщенность", -100, 100, 0), P("vibrance", "Сочность", -100, 100, 0),
-  P("temperature", "Температура", -100, 100, 0), P("tint", "Оттенок", -100, 100, 0)], (img, p) => {
+  P("temperature", "Температура", -100, 100, 0), P("tint", "Оттенок", -100, 100, 0), P("skin_wb", "Баланс по коже", 0, 100, 0)], (img, p, ctx) => {
+  const cast = p.skin_wb ? skinCast(img, ctx) : null;
+  const g = cast ? cast.gains.map((v) => v ** (p.skin_wb / 100)) : null;
   return I.stripMap(img, (f) => {
+    if (g && (g[0] !== 1 || g[1] !== 1 || g[2] !== 1)) {
+      const d = f.data;
+      for (let j = 0; j < d.length; j += 3) {
+        d[j] = Math.min(1, d[j] * g[0]);
+        d[j + 1] = Math.min(1, d[j + 1] * g[1]);
+        d[j + 2] = Math.min(1, d[j + 2] * g[2]);
+      }
+    }
     if (p.temperature || p.tint) f = whiteBalance(f, p.temperature / 100, p.tint / 100);
     if (p.saturation || p.vibrance) f = saturate(f, p.saturation / 100, p.vibrance / 100);
     return f;

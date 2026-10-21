@@ -108,7 +108,7 @@ const BY_PARAM = {
   "object.brightness": "sun", "object.contrast": "contrast", "object.saturation": "dropHalf", "object.sharpness": "blur",
   "crop.angle": "tilt",
   "light.shadows": "moon", "light.highlights": "sun", "brightness.amount": "sunSoft", "contrast.amount": "contrast",
-  "color.saturation": "dropHalf", "color.vibrance": "dropPlus", "color.temperature": "thermo", "color.tint": "tint",
+  "color.saturation": "dropHalf", "color.vibrance": "dropPlus", "color.temperature": "thermo", "color.skin_wb": "tone", "color.tint": "tint",
   "sharpen.sharpness": "sharp", "sharpen.clarity": "clarity",
   "filter.amount": "slider", "grain.amount": "grain", "grain.size": "size",
 };
