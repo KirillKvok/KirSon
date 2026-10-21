@@ -122,7 +122,7 @@ register("hair", "Волосы", [choice("color", "Цвет волос", HAIR_NA
           const j = 3 * i, L = lab.data[j], mm = m.data[i];
           // only the confident part of the mask: its soft edge is often skin or background, which
           // turned copper / blond there (the desktop has a sharper parsed hairline)
-          const t = clip((mm - 0.25) / 0.5);
+          const t = clip((mm - 0.15) / 0.4); // the mask is clean now (no skin): the hair is dyed evenly
           // far brighter than the hair itself = background caught by the mask (a lit wall)
           const w = t * t * (3 - 2 * t) * k * clip(1 - (L - meanL - 25) / 20);
           const nL = clip(newMean + (L - meanL) * gain, 0, 100);

@@ -1,7 +1,7 @@
 // Soft masks (planes 0..1, image size) from the analysis — port of kirson/core/face/masks.py.
 // Sizes are fractions of the face width, so masks match on the preview and the export.
 import * as I from "../core/img.js";
-import { Canvas, dilate } from "../core/draw.js";
+import { Canvas, dilate, erode } from "../core/draw.js";
 import * as T from "./topology.js";
 
 export const SEG_CLASSES = ["background", "hair", "body_skin", "face_skin", "clothes", "other"];
@@ -289,11 +289,14 @@ function parsed(img, ctx, classes) {
     for (let i = 0; i < m.data.length; i++) m.data[i] = ids.includes(f.parse[i]) ? 1 : 0;
     const r = I.resizeLinear(m, x1 - x0, y1 - y0);
     full ||= I.plane(img.w, img.h);
-    for (let y = 0; y < r.h && y0 + y < img.h; y++)
+    const fx = Math.max(1, r.w * 0.08), fy = Math.max(1, r.h * 0.08); // soft towards the crop's border
+    for (let y = 0; y < r.h && y0 + y < img.h; y++) {
+      const ey = Math.min(1, Math.min(y, r.h - 1 - y) / fy);
       for (let x = 0; x < r.w && x0 + x < img.w; x++) {
-        const j = (y0 + y) * img.w + x0 + x, v = r.data[y * r.w + x];
+        const j = (y0 + y) * img.w + x0 + x, v = r.data[y * r.w + x] * ey * Math.min(1, Math.min(x, r.w - 1 - x) / fx);
         if (v > full.data[j]) full.data[j] = v;
       }
+    }
   }
   return full;
 }
@@ -340,7 +343,95 @@ function hair(img, ctx) {
   near = I.resizeLinear(near, img.w, img.h);
   const h = mul(fresh, near), p = parsed(img, ctx, ["hair"]); // the precise hairline around the face
   if (p) for (let i = 0; i < h.data.length; i++) if (fresh.data[i] > 0.2 && p.data[i] > h.data[i]) h.data[i] = p.data[i];
+  // what the parsing / segmenter call skin (hairColour checks it against the photo's colours: in profile
+  // they call the temple hair «skin»)
+  const skin = hairSkin(img, ctx);
+  const hc = I.mapPlane(h, (v, i) => v * (1 - skin.data[i])); // the confident hair, for the reach
+  // where hair may be: the confident hair grown by ~5 % of the photo, inside the multiclass hair's reach,
+  // where the hair model / the parsing see at least a little hair — or right at the face's edge, where
+  // they miss the temples (dark walls above the head stay walls)
+  const k = Math.min(1, 320 / Math.max(img.w, img.h)), sw = Math.max(2, Math.round(img.w * k)), sh = Math.max(2, Math.round(img.h * k));
+  const reach = I.resizeLinear(I.gaussian(dilate(I.mapPlane(I.resize(hc, sw, sh), (v) => (v > 0.35 ? 1 : 0)),
+    Math.max(1, Math.round(Math.max(sw, sh) * 0.05))), 1.5), img.w, img.h);
+  const edge = perFace(shape([T.FACE_OVAL], 0.05, 0.15))(img, ctx);
+  for (let i = 0; i < reach.data.length; i++)
+    reach.data[i] *= Math.min(1, near.data[i] * 1.5) * Math.min(1, Math.max(fresh.data[i] * 5, p ? p.data[i] * 1.5 : 0, edge.data[i]));
+  // inside the face's own outline (landmarks) the parsing's skin is trusted as it is: a shadowed
+  // face edge looks hair-like by colour and got a light rim when dyed blond
+  const inner = perFace(shape([T.FACE_OVAL], 0.02, 0.01))(img, ctx);
+  hairColour(img, h, skin, reach, inner);
   return snap(img, h);
+}
+
+// what is surely not hair: the parsing's skin, nose, ears, neck (sharp) and the segmenter's face / body
+// skin (256 px, blurry: only where it is sure)
+function hairSkin(img, ctx) {
+  const skin = I.plane(img.w, img.h), face = segClass(ctx, "face_skin", img.w, img.h), body = segClass(ctx, "body_skin", img.w, img.h);
+  const ps = parsed(img, ctx, ["skin", "nose", "l_ear", "r_ear", "neck", "neck_l"]);
+  // with the parsing, the face is the parsing's (in profile the blurry segmenter calls the temple hair
+  // «face skin»); the segmenter's body skin (arms, shoulders) still counts
+  for (let i = 0; i < skin.data.length; i++) {
+    const seg = ps ? body.data[i] : Math.max(face.data[i], body.data[i]);
+    skin.data[i] = Math.max(ps ? ps.data[i] : 0, Math.min(1, Math.max(0, (seg - 0.55) / 0.3)));
+  }
+  return skin;
+}
+
+// The photo's own colours of hair, skin and background (Lab; from the confident parts of each mask):
+// inside `reach` a pixel goes to the class it looks most like. Long hair the hair model saw only in
+// blotches is filled; forehead, temples, an ear in profile — where the models overreach — are let go;
+// where the background has the hair's colour, the hair model's own answer stays.
+function hairColour(img, h, skin, reach, inner) {
+  const b = I.bbox(I.mapPlane(reach, (v, i) => Math.max(v, h.data[i])), 2, 0.05);
+  if (!b) return;
+  const f = I.cropFloat(img, b), lab = I.rgbToLab(f), w = b.x1 - b.x0, n = w * (b.y1 - b.y0);
+  const st = () => ({ n: 0, L: 0, a: 0, b: 0, LL: 0, aa: 0, bb: 0 });
+  const hs = st(), bs = st(), sk = [[], [], []];
+  for (let i = 0; i < n; i++) {
+    const x = i % w, y = (i - x) / w, j = (b.y0 + y) * img.w + b.x0 + x;
+    const L = lab.data[3 * i], A = lab.data[3 * i + 1], B = lab.data[3 * i + 2];
+    if (skin.data[j] > 0.8) { if ((i & 3) === 0) { sk[0].push(L); sk[1].push(A); sk[2].push(B); } continue; }
+    const s = h.data[j] > 0.75 ? hs : h.data[j] < 0.03 && reach.data[j] < 0.5 ? bs : null;
+    if (!s) continue;
+    s.n++; s.L += L; s.a += A; s.b += B; s.LL += L * L; s.aa += A * A; s.bb += B * B;
+  }
+  if (hs.n < 50) {
+    for (let i = 0; i < h.data.length; i++) h.data[i] *= 1 - skin.data[i];
+    return;
+  }
+  const fin = (s) => {
+    if (s.n < 50) return null;
+    const m = [s.L / s.n, s.a / s.n, s.b / s.n];
+    return [m, [Math.sqrt(Math.max(16, s.LL / s.n - m[0] ** 2)), Math.sqrt(Math.max(4, s.aa / s.n - m[1] ** 2)),
+      Math.sqrt(Math.max(4, s.bb / s.n - m[2] ** 2))]];
+  };
+  // skin: median and MAD — robust to hair the parsing called skin
+  const robust = (v) => {
+    if (v.length < 50) return null;
+    const med = (a) => { const c = Float32Array.from(a).sort(); return c[c.length >> 1]; };
+    const m = v.map(med), sd = v.map((a, k) => Math.max(k ? 2 : 4, 1.4826 * med(a.map((x) => Math.abs(x - m[k])))));
+    return [m, sd];
+  };
+  const H = fin(hs), S = robust(sk), B = fin(bs);
+  const d2 = (L, A, Bb, [m, sd]) => ((L - m[0]) / sd[0]) ** 2 * 0.6 + ((A - m[1]) / sd[1]) ** 2 + ((Bb - m[2]) / sd[2]) ** 2;
+  // the hair's own shadows (between strands) are darker than its mean: lightness counts little below it
+  const dHair = (L, A, Bb) => d2(L < H[0][0] ? H[0][0] - (H[0][0] - L) * 0.4 : L, A, Bb, H);
+  for (let i = 0; i < n; i++) {
+    const x = i % w, y = (i - x) / w, j = (b.y0 + y) * img.w + b.x0 + x;
+    const r = reach.data[j];
+    if (r <= 0 && h.data[j] <= 0 && skin.data[j] <= 0) continue;
+    const L = lab.data[3 * i], A = lab.data[3 * i + 1], Bb = lab.data[3 * i + 2];
+    const eh = Math.exp(-dHair(L, A, Bb) / 2), es = S ? Math.exp(-d2(L, A, Bb, S) / 2) : 0, eb = B ? Math.exp(-d2(L, A, Bb, B) / 2) : 0;
+    const sum = eh + es + eb + 1e-9, pHair = eh / sum, pSkin = es / sum;
+    // what the models call skin stays skin — unless it clearly looks like this hair, not like this skin
+    const sk = Math.max(skin.data[j] * (1 - Math.min(1, Math.max(0, (pHair - pSkin) / 0.5))), skin.data[j] * inner.data[j]);
+    // hair-coloured inside the reach: filled, in proportion (thin hair over skin at the temples is half
+    // dyed, not left a dark wedge); the background's own look decides against it
+    const grow = r * (1 - sk) * (1 - inner.data[j]) * Math.min(1, Math.max(0, (pHair - 0.3) / 0.45));
+    let v = Math.max(h.data[j] * (1 - sk), grow);
+    v *= 1 - Math.min(1, Math.max(0, (pSkin - 0.5) / 0.3)); // skin-coloured: out
+    h.data[j] = v;
+  }
 }
 
 function sclera(img, ctx) {
@@ -354,6 +445,8 @@ export const MASKS = {
   face_skin: faceSkin,
   body_skin: (img, ctx) => refinedClass(img, ctx, "body_skin"),
   hair,
+  hair_skin: hairSkin, // (inspection)
+  hair_raw: (img, ctx) => resized(ctx, "hairseg", getAnalysis(ctx).hair, img.w, img.h), // (inspection)
   person: (img, ctx) => refinedClass(img, ctx, "person"),
   lips,
   mouth_inner: perFace(shape([T.LIPS_INNER], 0.004)),
