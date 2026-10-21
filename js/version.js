@@ -1,1 +1,1 @@
-export const VERSION = "a87165ef"; // written by tools/web_build.py
+export const VERSION = "4fecaea7"; // written by tools/web_build.py
