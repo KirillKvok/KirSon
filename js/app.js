@@ -140,6 +140,7 @@ const TABS = [
       { kind: "brushSize", label: "Размер кисти" },
       { kind: "brushStrength", label: "Сила кисти" },
       { kind: "liquifyGrid", label: "Сетка" },
+      { kind: "liquifyProtect", label: "Защита фона" },
       { kind: "brushClear", label: "Стереть мазки" },
     ],
   },
@@ -792,6 +793,13 @@ function kindTool(t, b) {
             : "Проведите там, где сглаживание не нужно: родинка, ресницы, контур губ", 3500);
       return;
     }
+    else if (t.kind === "liquifyProtect") {
+      const v = app.pipeline.step("liquify").values, on = !(v.protect ?? 1);
+      v.protect = on ? 1 : 0;
+      pushHistory();
+      requestRender();
+      toast(on ? "Фон рядом с человеком не гнётся — двери и стены остаются прямыми" : "Пластика гнёт всё, и фон тоже", 3000);
+    }
     else if (t.kind === "liquifyGrid") {
       app.grid = !app.grid;
       try { localStorage.setItem("kirson-grid", app.grid ? "1" : "0"); } catch { /* private mode */ }
@@ -825,6 +833,7 @@ function kindTool(t, b) {
   if (t.kind === "brush" && app.brush.tool === t.tool && app.brush.mode === t.mode) b.classList.add("on");
   if ((t.kind === "brushSize" || t.kind === "brushStrength") && app.tool === t) b.classList.add("on");
   if (t.kind === "liquifyGrid" && app.grid) b.classList.add("on");
+  if (t.kind === "liquifyProtect" && (app.pipeline.step("liquify").values.protect ?? 1)) b.classList.add("on");
 }
 
 // filter buttons show the photo with that filter (a 64 px square around the face), made once per photo
@@ -916,6 +925,7 @@ const TIPS = {
   faceBrush: "Сглаживание и пятна вручную: проведите пальцем там, где нужно, — или где сглаживание лишнее.",
   shapeBrush: "Пластика пальцем: тяните, сужайте, расширяйте где угодно. «Вернуть как было» убирает лишнее.",
   liquifyGrid: "Сетка показывает, где и насколько фото деформировано пластикой.",
+  liquifyProtect: "Мазок по человеку не гнёт фон рядом: стены, двери и полки остаются прямыми. Мазок по фону двигает фон.",
   smartFrame: "Кадрирует по правилам портрета: глаза на верхней трети, место по направлению взгляда.",
   "btn-video": "Ретушь видео до 15 секунд: кожа, тон и цвет в каждом кадре, звук сохраняется.",
   "btn-camera": "Камера подскажет, как встать к свету и держать телефон, — и снимет лучший кадр.",

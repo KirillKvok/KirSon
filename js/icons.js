@@ -115,7 +115,7 @@ const BY_PARAM = {
 const BY_KIND = {
   auto: "sparkle", strength: "slider", reset: "reset", facePick: "person", faceAll: "group",
   objectPick: "cursor", objectRemove: "eraser", objectClear: "close", brushSize: "size", brushStrength: "gauge",
-  brushClear: "trash", liquifyGrid: "mesh", aspect: "rect", rotate: "rotate", flip: "flip", frameReset: "reset",
+  brushClear: "trash", liquifyGrid: "mesh", liquifyProtect: "shield", aspect: "rect", rotate: "rotate", flip: "flip", frameReset: "reset",
   presetSave: "plus", versionSave: "bookmark", compare: "grid", batch: "layers", enhance: "sparkle", bodyAuto: "sparkle", smartFrame: "thirds", videoEdit: "film", myPreset: "layers", preset: "layers",
 };
 const BRUSH = { liquify: ["push", "shrink", "expand", "restore"], heal: ["bandage"], mask_edit: ["shield", "brush", "person", "mountain"],

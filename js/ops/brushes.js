@@ -3,7 +3,8 @@
 // side, points as fractions of width / height — the same strokes on the preview and the export.
 import { register, hidden } from "../core/pipeline.js";
 import * as I from "../core/img.js";
-import { Canvas, dilate } from "../core/draw.js";
+import { Canvas, dilate, distance } from "../core/draw.js";
+import { getMask } from "../face/masks.js";
 import { Field } from "../core/warp.js";
 
 export const BRUSH_TAB = "Кисти";
@@ -43,13 +44,15 @@ function resample(pts, step) {
 export const LIQUIFY_MODES = ["Сдвиг", "Сузить", "Расширить", "Вернуть как было"];
 const RESTORE = 3; // the deformation made by earlier strokes fades back to the photo where it passes
 
-export function buildField(strokes, w, h) {
+// `only`: the strokes to take (null = all); «Вернуть как было» always applies to what came before it
+export function buildField(strokes, w, h, only = null) {
   const field = new Field(), long = Math.max(w, h);
   for (const s of strokes) {
     const mode = Math.round(s[0]), r = s[1] * long, k = Math.min(1, Math.max(0, s[2]));
     if (r < 1 || k <= 0) continue;
     const pts = pathPx(s, w, h);
     if (mode === RESTORE) field.fade(pts, r, k);
+    else if (only && !only.has(s)) continue;
     else if (mode === 0) {
       const path = resample(pts, r * PUSH_SPACING);
       for (let i = 0; i + 1 < path.length; i++) {
@@ -64,10 +67,64 @@ export function buildField(strokes, w, h) {
   return field;
 }
 
-register("liquify", "Ручная пластика", [hidden("strokes", [])],
-  (img, p) => {
+// «Защита фона» (hidden `protect`, on by default): a stroke drawn over a person moves the person; the
+// background next to them follows only within a narrow band — enough to fill what the person uncovered —
+// and is untouched beyond it (doors and shelves stay straight), as in «Фигура». A stroke drawn over the
+// background itself moves everything (she means the background then).
+const BG_BAND = 0.015;
+
+function personOf(img, ctx) {
+  try {
+    const m = getMask(img, ctx, "person");
+    for (let i = 0; i < m.data.length; i += 97) if (m.data[i] > 0.5) return m;
+  } catch { /* no analysis yet: no people known */ }
+  return null;
+}
+
+// share of the stroke's path over the person
+function overPerson(s, person) {
+  const { w, h } = person, pts = pathPx(s, w, h);
+  let n = 0;
+  for (const [x, y] of pts) n += person.data[Math.min(h - 1, Math.max(0, Math.round(y))) * w + Math.min(w - 1, Math.max(0, Math.round(x)))];
+  return n / pts.length;
+}
+
+register("liquify", "Ручная пластика", [hidden("strokes", []), hidden("protect", 1)],
+  (img, p, ctx) => {
     const strokes = strokesOf(p.strokes);
-    return strokes.length ? buildField(strokes, img.w, img.h).apply(img) : img;
+    if (!strokes.length) return img;
+    const person = (p.protect ?? 1) ? personOf(img, ctx) : null;
+    const onPerson = new Set(person ? strokes.filter((s) => Math.round(s[0]) !== RESTORE && overPerson(s, person) >= 0.5) : []);
+    if (!onPerson.size) return buildField(strokes, img.w, img.h).apply(img);
+    const { w, h } = img, free = new Set(strokes.filter((s) => !onPerson.has(s)));
+    let out = img;
+    const wp = buildField(strokes, w, h, onPerson).compute(w, h);
+    if (wp) {
+      // the person layer gets the whole warp, the background the same one fading out from the silhouette
+      let dist = ctx.cache.get(`liquify_dist:${w}x${h}`);
+      if (!dist || dist[0] !== person) ctx.cache.set(`liquify_dist:${w}x${h}`, (dist = [person, distance(person, (v) => v >= 0.5)]));
+      const mv = wp.moved(w, h);
+      let mvMax = 0;
+      for (let i = 0; i < mv.data.length; i++) if (mv.data[i] > mvMax) mvMax = mv.data[i];
+      // zero from max(3 % of the frame, 2.5x the largest move): the uncovered strip is filled by the
+      // background stretched at most ~40 %, and beyond that the background is the photo's own (the
+      // 3x-band of «Фигура» is too wide for hand strokes, which move much more)
+      const reach = Math.max(BG_BAND * 2 * Math.max(w, h), 2.5 * mvMax);
+      const fall = I.mapPlane(dist[1], (d) => { const t = Math.min(1, d / reach); return (1 - t) * (1 - t) * (1 + 2 * t); });
+      const layer = wp.apply(img), alpha = wp.apply(person), bg = wp.attenuated(fall).apply(img);
+      const data = new Uint8ClampedArray(img.data.length);
+      for (let i = 0; i < w * h; i++) {
+        const al = alpha.data[i];
+        for (let c = 0; c < 3; c++) {
+          const j = 3 * i + c;
+          data[j] = layer.data[j] * al + bg.data[j] * (1 - al) + 0.5;
+        }
+      }
+      out = { w, h, data };
+    }
+    // strokes over the background: everything moves
+    if (free.size && [...free].some((s) => Math.round(s[0]) !== RESTORE)) out = buildField(strokes, w, h, free).apply(out);
+    return out;
   }, { category: BRUSH_TAB, active: (p) => strokesOf(p.strokes).length > 0 });
 
 // --- «Маски»: corrections of the automatic masks ------------------------------------------------
