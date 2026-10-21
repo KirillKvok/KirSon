@@ -85,10 +85,10 @@ button { font: inherit; color: inherit; }
   gap: 8px;
   z-index: 2;
 }
-.brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.brand { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; overflow: hidden; } /* shrinks, never under the buttons */
 .mono { width: 28px; height: 28px; }
-.word { font-family: "Cormorant Garamond", serif; font-weight: 600; font-size: 22px; color: var(--accent); }
-.actions { display: flex; align-items: center; gap: 4px; }
+.word { white-space: nowrap; font-family: "Cormorant Garamond", serif; font-weight: 600; font-size: 22px; color: var(--accent); }
+.actions { display: flex; align-items: center; gap: 4px; flex: none; }
 .icon {
   width: 40px; height: 40px; border-radius: 12px; border: 0; background: transparent;
   display: grid; place-items: center; cursor: pointer;
@@ -212,9 +212,10 @@ input[type=range]::-moz-range-thumb {
   background: var(--on-accent); color: var(--accent);
 }
 [hidden] { display: none !important; }
+/* six buttons in the bar: below 560 px (the widest phones too) the monogram alone */
+@media (max-width: 560px) { .word { display: none; } }
 @media (max-width: 420px) {
   .bar { padding: 5px 5px 5px 10px; }
-  .word { display: none; } /* six buttons in the bar: the monogram alone */
   .mono { width: 28px; height: 28px; }
   .actions { gap: 0; }
   .icon { width: 36px; height: 38px; }
