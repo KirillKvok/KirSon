@@ -115,36 +115,19 @@ function areaTaps(n, nn) {
   return { start, count, off, wts: Float32Array.from(wts) };
 }
 
+// rows of both passes on all cores (kernels.js areaH / areaV)
 export function resizeArea(f, nw, nh) {
-  const { w, h, c } = f, d = f.data;
-  const tx = areaTaps(w, nw), ty = areaTaps(h, nh);
-  const tmp = new Float32Array(nw * h * c);
-  for (let y = 0; y < h; y++) {
-    const row = y * w * c, orow = y * nw * c;
-    for (let x = 0; x < nw; x++) {
-      const s0 = tx.start[x], cnt = tx.count[x], wo = tx.off[x];
-      for (let ch = 0; ch < c; ch++) {
-        let acc = 0;
-        for (let i = 0; i < cnt; i++) acc += d[row + (s0 + i) * c + ch] * tx.wts[wo + i];
-        tmp[orow + x * c + ch] = acc;
-      }
-    }
-  }
-  const out = new Float32Array(nw * nh * c), stride = nw * c;
-  for (let y = 0; y < nh; y++) {
-    const s0 = ty.start[y], cnt = ty.count[y], wo = ty.off[y], o = y * stride;
-    for (let i = 0; i < cnt; i++) {
-      const wgt = ty.wts[wo + i], src = (s0 + i) * stride;
-      for (let j = 0; j < stride; j++) out[o + j] += tmp[src + j] * wgt;
-    }
-  }
+  const { w, h, c } = f;
+  const tmp = par.shared(nw * h * c), out = par.shared(nw * nh * c);
+  par.rows("areaH", { src: par.sharedCopy(f.data), dst: tmp, w, c, nw, t: areaTaps(w, nw) }, h);
+  par.rows("areaV", { src: tmp, dst: out, c, nw, t: areaTaps(h, nh) }, nh);
   return fimg(nw, nh, c, out);
 }
 
 // Bilinear (pixel centres aligned, like cv2.INTER_LINEAR); column indices / weights precomputed.
 export function resizeLinear(f, nw, nh) {
-  const { w, h, c } = f, out = new Float32Array(nw * nh * c), d = f.data;
-  const sx = w / nw, sy = h / nh;
+  const { w, h, c } = f, out = par.shared(nw * nh * c);
+  const sx = w / nw;
   const X0 = new Int32Array(nw), X1 = new Int32Array(nw), TX = new Float32Array(nw);
   for (let x = 0; x < nw; x++) {
     const fx = Math.min(w - 1, Math.max(0, (x + 0.5) * sx - 0.5));
@@ -152,19 +135,7 @@ export function resizeLinear(f, nw, nh) {
     X1[x] = Math.min(w - 1, Math.floor(fx) + 1) * c;
     TX[x] = fx - Math.floor(fx);
   }
-  for (let y = 0; y < nh; y++) {
-    const fy = Math.min(h - 1, Math.max(0, (y + 0.5) * sy - 0.5));
-    const r0 = Math.floor(fy) * w * c, r1 = Math.min(h - 1, Math.floor(fy) + 1) * w * c, ty = fy - Math.floor(fy);
-    let o = y * nw * c;
-    for (let x = 0; x < nw; x++) {
-      const x0 = X0[x], x1 = X1[x], tx = TX[x];
-      for (let ch = 0; ch < c; ch++, o++) {
-        const top = d[r0 + x0 + ch] + (d[r0 + x1 + ch] - d[r0 + x0 + ch]) * tx;
-        const bot = d[r1 + x0 + ch] + (d[r1 + x1 + ch] - d[r1 + x0 + ch]) * tx;
-        out[o] = top + (bot - top) * ty;
-      }
-    }
-  }
+  par.rows("linear", { src: par.sharedCopy(f.data), dst: out, w, h, c, nw, nh, X0, X1, TX }, nh);
   return fimg(nw, nh, c, out);
 }
 
@@ -265,62 +236,18 @@ export function applyCurve(img, curve) {
   return { w: img.w, h: img.h, data: out };
 }
 
-// sRGB <-> CIE Lab (D65), as OpenCV's float COLOR_RGB2Lab: L 0..100, a/b about -128..127.
-const lin = new Float32Array(4096);
-for (let i = 0; i < 4096; i++) {
-  const v = i / 4095;
-  lin[i] = v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-}
-function toLin(v) {
-  return v <= 0 ? 0 : v >= 1 ? 1 : lin[(v * 4095 + 0.5) | 0];
-}
-function fromLinExact(v) {
-  return v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
-}
-// table over sqrt(v) (the curve is steep near black), linear interpolation: error < 1e-5
-const GAM_N = 4096, gam = new Float32Array(GAM_N + 2);
-for (let i = 0; i <= GAM_N + 1; i++) gam[i] = fromLinExact(Math.min(1, (i / GAM_N) ** 2));
-function fromLin(v) {
-  if (v >= 1) return fromLinExact(v);
-  const u = Math.sqrt(v) * GAM_N, i = u | 0;
-  return gam[i] + (gam[i + 1] - gam[i]) * (u - i);
-}
-const Xn = 0.950456, Zn = 1.088754;
-function fLab(t) {
-  return t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
-}
-
+// sRGB <-> CIE Lab (D65), as OpenCV's float COLOR_RGB2Lab: L 0..100, a/b about -128..127. The pixel
+// math lives in kernels.js (row ranges): large images are converted on all cores (par.js).
 export function rgbToLab(f) {
-  const out = fimg(f.w, f.h, 3), d = f.data, o = out.data;
-  for (let j = 0; j < d.length; j += 3) {
-    const r = toLin(d[j]), g = toLin(d[j + 1]), b = toLin(d[j + 2]);
-    const x = (0.412453 * r + 0.35758 * g + 0.180423 * b) / Xn;
-    const y = 0.212671 * r + 0.71516 * g + 0.072169 * b;
-    const z = (0.019334 * r + 0.119193 * g + 0.950227 * b) / Zn;
-    const fx = fLab(x), fy = fLab(y), fz = fLab(z);
-    o[j] = y > 0.008856 ? 116 * fy - 16 : 903.3 * y;
-    o[j + 1] = 500 * (fx - fy);
-    o[j + 2] = 200 * (fy - fz);
-  }
-  return out;
+  const out = par.shared(f.data.length);
+  par.rows("toLab", { src: par.sharedCopy(f.data), dst: out, w: f.w }, f.h);
+  return fimg(f.w, f.h, 3, out);
 }
 
 export function labToRgb(lab) {
-  const out = fimg(lab.w, lab.h, 3), d = lab.data, o = out.data;
-  for (let j = 0; j < d.length; j += 3) {
-    const L = d[j];
-    const fy = (L + 16) / 116, fx = fy + d[j + 1] / 500, fz = fy - d[j + 2] / 200;
-    const y = L > 7.9996 ? fy * fy * fy : L / 903.3;
-    const x = (fx > 0.206893 ? fx * fx * fx : (fx - 16 / 116) / 7.787) * Xn;
-    const z = (fz > 0.206893 ? fz * fz * fz : (fz - 16 / 116) / 7.787) * Zn;
-    const r = 3.240479 * x - 1.53715 * y - 0.498535 * z;
-    const g = -0.969256 * x + 1.875991 * y + 0.041556 * z;
-    const b = 0.055648 * x - 0.204043 * y + 1.057311 * z;
-    o[j] = fromLin(Math.max(0, r));
-    o[j + 1] = fromLin(Math.max(0, g));
-    o[j + 2] = fromLin(Math.max(0, b));
-  }
-  return out;
+  const out = par.shared(lab.data.length);
+  par.rows("fromLab", { src: par.sharedCopy(lab.data), dst: out, w: lab.w }, lab.h);
+  return fimg(lab.w, lab.h, 3, out);
 }
 
 // --- small helpers --------------------------------------------------------------------------
