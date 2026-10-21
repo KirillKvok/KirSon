@@ -21,6 +21,7 @@ import { Engine } from "./engine.js";
 import { analyze, objectMask, parseFaces, warmUpParsing, removeFill, superResolve, faceTracker, setGpu, onnxInfo } from "./face/analysis.js";
 import { openCoach } from "./coach.js";
 import * as assets from "./assets.js";
+import * as device from "./device.js";
 import { showShare, presetFromAddress } from "./share.js";
 import { VERSION } from "./version.js";
 import { runTour, seen, welcomeSteps, editorSteps } from "./tour.js";
@@ -37,7 +38,7 @@ const PREVIEW = 1280; // preview long side (as on the desktop)
 const FAST = 640;     // while a slider is held
 const DETAIL = 2048;  // preview long side when zoomed in (fine detail)
 const MAX_ZOOM = 6;
-const MAX_PIXELS = 16_000_000; // iOS canvas limit is 16.7 MP
+const MAX_PIXELS = device.MAX_PIXELS; // iOS canvas limit is 16.7 MP; lower in the light mode
 const EXPORT_PHONE = 3200; // long side of the saved photo on phones (memory)
 
 // Tabs: what each one offers. {op, param} = a slider tool; {op, param, option} = a choice chip.
@@ -1141,9 +1142,20 @@ function previewState() {
 // only slow renders fall back to the quick copy. Times are learned from the last renders per key.
 const renderMs = {};
 const SHARP_WHILE_DRAGGING_MS = 900;
+// the 2048 px copy for zoomed-in work, made when first needed (phones: memory)
+function ensureDetail(source = null) {
+  if (!app.detailWidth || app.detailReady || !app.original) return;
+  const W = app.original.width, H = app.original.height, [dw, dh] = scaled({ width: W, height: H }, DETAIL);
+  const tmp = source ? null : canvasOf(app.original);
+  engine.setImage("detail", imageData(source || tmp, dw, dh), dw / W, app.imageId);
+  if (tmp) tmp.width = tmp.height = 0;
+  app.detailReady = true;
+}
+
 function requestRender() {
   if (!app.preview) return;
   const full = zoom.s > 1.5 && app.detailWidth ? "detail" : "preview";
+  if (full === "detail") ensureDetail();
   const key = app.dragging && (renderMs[full] ?? 0) > SHARP_WHILE_DRAGGING_MS ? "fast" : full;
   engine.preview(key, previewState(), app.split ? "always" : true);
 }
@@ -1820,7 +1832,9 @@ function imageData(source, w, h) {
   g.imageSmoothingEnabled = true;
   g.imageSmoothingQuality = "high";
   g.drawImage(source, 0, 0, w, h);
-  return g.getImageData(0, 0, w, h);
+  const out = g.getImageData(0, 0, w, h);
+  c.width = c.height = 0; // released now: Safari counts canvas memory and closes the tab over its limit
+  return out;
 }
 
 // Decoded photo, EXIF rotation applied. createImageBitmap does not wait for the page to be
@@ -1866,6 +1880,9 @@ async function decodeHeic(file) {
 async function openFile(file, { restoring = false } = {}) {
   if (!file) return;
   app.file = file;
+  device.openingStarted();
+  clearTimeout(app.openingTimer);
+  app.openingTimer = setTimeout(device.openingDone, 40000); // alive 40 s after opening: it went well
   if (!restoring) {
     session.save({ file, name: file.name || "photo", state: null, exporting: false, bgFile: null, bgPid: null, versions: [] });
     app.versions = [];
@@ -1886,11 +1903,13 @@ async function openFile(file, { restoring = false } = {}) {
     engine.setImage("fast", imageData(img, fw, fh), fw / w, app.imageId);
     app.fastWidth = fw;
     app.detailWidth = 0;
+    app.detailReady = false;
+    engine.drop("detail");
     if (Math.max(w, h) > PREVIEW * 1.2) { // sharper preview for zoomed-in work
-      const [dw, dh] = scaled({ width: w, height: h }, DETAIL);
-      engine.setImage("detail", imageData(img, dw, dh), dw / w, app.imageId);
-      app.detailWidth = dw;
+      app.detailWidth = scaled({ width: w, height: h }, DETAIL)[0];
+      if (device.EAGER_DETAIL) ensureDetail(img);
     }
+    img.close?.(); // the decoded photo (12 MP: 48 MB) is not kept beyond its ImageData copies
     Object.assign(app.pipeline.step("crop").values, { rot90: 0, flip: 0, angle: 0, x0: 0, y0: 0, x1: 1, y1: 1 });
     app.pipeline.step("face_select").values.faces = [];
     app.facePick = false;
@@ -1917,6 +1936,7 @@ async function openFile(file, { restoring = false } = {}) {
   } catch (err) {
     console.error(err);
     toast("Не удалось открыть фото");
+    device.openingDone();
     $("busy").hidden = true;
   }
 }
@@ -1934,10 +1954,12 @@ async function runAnalysis(imageId) {
     console.debug(`analysis ${Math.round(performance.now() - t)} ms, faces ${a.faces.length}`);
     if (!a.faces.length) toast("Лицо не найдено — ретушь лица недоступна");
     requestRender();
-    if (a.faces.length) refineFaces(a, imageId);
+    if (a.faces.length && device.FACE_PARSING) refineFaces(a, imageId);
+    else device.openingDone();
   } catch (err) {
     console.error(err);
     toast("Не удалось проанализировать фото");
+    device.openingDone();
   }
   $("busy").hidden = true;
 }
@@ -1955,6 +1977,7 @@ async function refineFaces(a, imageId) {
   } catch (err) {
     console.warn("face parsing unavailable", err); // the landmark masks stay
   }
+  device.openingDone();
 }
 
 $("file").addEventListener("change", (e) => openFile(e.target.files[0]));
@@ -2133,6 +2156,7 @@ async function saveVideo() {
   $("busy").hidden = false;
   toast("Готовлю видео…", 0);
   try {
+    if (app.detailWidth) ensureDetail();
     const key = app.detailWidth ? "detail" : "preview";
     const { image, before } = await engine.render(key, app.pipeline.toJSON(), "always");
     const focus = socialFocus();
@@ -2270,7 +2294,7 @@ async function prepareCore() {
 // the graphics card for the ONNX models (2–5x faster where WebGPU works): its runtime (22 MB) is fetched
 // quietly after the core and used from the next start; on localhost straight away (files on the server)
 async function prepareGpu() {
-  if (!navigator.gpu) return;
+  if (!navigator.gpu || !device.GPU_ONNX) return;
   try { if (localStorage.getItem("kirson-nogpu")) return; } catch { /* private mode */ } // a switch for debugging
   try {
     if (!(await navigator.gpu.requestAdapter())) return;
@@ -2280,7 +2304,22 @@ async function prepareGpu() {
     assets.download(todo).catch(() => {}); // next start
   } catch { /* no WebGPU here */ }
 }
-prepareCore().then(prepareGpu).finally(() => setTimeout(warmUpParsing, 500));
+prepareCore().then(prepareGpu).finally(() => setTimeout(device.FACE_PARSING ? warmUpParsing : () => {}, 500));
+
+// the tab died while opening a photo last time (memory): the light mode is on — say so, and how to undo
+if (device.SAFE > 0) {
+  const note = document.createElement("p");
+  note.className = "install-hint";
+  $("welcome").insertBefore(note, $("version"));
+  note.append(device.SAFE >= 2 ? "Облегчённый режим: без разбора лица, фото до 8 МП. " : "Облегчённый режим для этого телефона. ");
+  const off = document.createElement("a");
+  off.href = "#";
+  off.textContent = "Выключить";
+  off.onclick = (e) => { e.preventDefault(); device.resetSafe(); location.reload(); };
+  note.append(off);
+}
+if (device.CRASHED_OPENING)
+  setTimeout(() => toast("В прошлый раз телефону не хватило памяти — включил облегчённый режим. Откройте фото снова", 6000), 800);
 
 // a feature's own network (object selection, removal, enhancement, HEIC) the first time it is used
 async function ensureExtra(name) {

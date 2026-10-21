@@ -13,7 +13,8 @@ let helpers = [], ready = 0;
 // called once by the processing worker
 export function start() {
   if (!ON || helpers.length) return;
-  const n = Math.min(5, Math.max(0, (navigator.hardwareConcurrency || 2) - 1));
+  const asked = new URLSearchParams(self.location.search).get("helpers"); // js/device.js HELPERS
+  const n = asked !== null ? Math.max(0, Math.min(5, Number(asked) || 0)) : Math.min(5, Math.max(0, (navigator.hardwareConcurrency || 2) - 1));
   for (let i = 0; i < n; i++) {
     try {
       const h = new Worker(new URL("../helper.js", import.meta.url), { type: "module" });

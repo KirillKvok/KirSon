@@ -384,54 +384,75 @@ function hairSkin(img, ctx) {
 function hairColour(img, h, skin, reach, inner) {
   const b = I.bbox(I.mapPlane(reach, (v, i) => Math.max(v, h.data[i])), 2, 0.05);
   if (!b) return;
-  const f = I.cropFloat(img, b), lab = I.rgbToLab(f), w = b.x1 - b.x0, n = w * (b.y1 - b.y0);
+  // the colour classes on a small copy (at most 900 px): a 12 MP export kept 300 MB of Lab otherwise
+  // (iPhone Safari closes such a tab); the decisions are smooth, read back bilinearly per pixel
+  const bw = b.x1 - b.x0, bh = b.y1 - b.y0, k = Math.min(1, 900 / Math.max(bw, bh));
+  const lw = Math.max(2, Math.round(bw * k)), lh = Math.max(2, Math.round(bh * k)), ln = lw * lh;
+  const low = I.fimg(lw, lh, 3), at = new Int32Array(ln);
+  for (let y = 0; y < lh; y++)
+    for (let x = 0; x < lw; x++) {
+      const sx = Math.min(img.w - 1, b.x0 + Math.floor(((x + 0.5) * bw) / lw)), sy = Math.min(img.h - 1, b.y0 + Math.floor(((y + 0.5) * bh) / lh));
+      const j = sy * img.w + sx, i = y * lw + x;
+      at[i] = j;
+      for (let c = 0; c < 3; c++) low.data[3 * i + c] = img.data[3 * j + c] / 255;
+    }
+  const lab = I.rgbToLab(low);
   const st = () => ({ n: 0, L: 0, a: 0, b: 0, LL: 0, aa: 0, bb: 0 });
   const hs = st(), bs = st(), sk = [[], [], []];
-  for (let i = 0; i < n; i++) {
-    const x = i % w, y = (i - x) / w, j = (b.y0 + y) * img.w + b.x0 + x;
-    const L = lab.data[3 * i], A = lab.data[3 * i + 1], B = lab.data[3 * i + 2];
-    if (skin.data[j] > 0.8) { if ((i & 3) === 0) { sk[0].push(L); sk[1].push(A); sk[2].push(B); } continue; }
+  for (let i = 0; i < ln; i++) {
+    const j = at[i], L = lab.data[3 * i], A = lab.data[3 * i + 1], B = lab.data[3 * i + 2];
+    if (skin.data[j] > 0.8) { sk[0].push(L); sk[1].push(A); sk[2].push(B); continue; }
     const s = h.data[j] > 0.75 ? hs : h.data[j] < 0.03 && reach.data[j] < 0.5 ? bs : null;
     if (!s) continue;
     s.n++; s.L += L; s.a += A; s.b += B; s.LL += L * L; s.aa += A * A; s.bb += B * B;
   }
-  if (hs.n < 50) {
+  if (hs.n < 30) {
     for (let i = 0; i < h.data.length; i++) h.data[i] *= 1 - skin.data[i];
     return;
   }
   const fin = (s) => {
-    if (s.n < 50) return null;
+    if (s.n < 30) return null;
     const m = [s.L / s.n, s.a / s.n, s.b / s.n];
     return [m, [Math.sqrt(Math.max(16, s.LL / s.n - m[0] ** 2)), Math.sqrt(Math.max(4, s.aa / s.n - m[1] ** 2)),
       Math.sqrt(Math.max(4, s.bb / s.n - m[2] ** 2))]];
   };
   // skin: median and MAD — robust to hair the parsing called skin
   const robust = (v) => {
-    if (v.length < 50) return null;
+    if (v[0].length < 30) return null;
     const med = (a) => { const c = Float32Array.from(a).sort(); return c[c.length >> 1]; };
-    const m = v.map(med), sd = v.map((a, k) => Math.max(k ? 2 : 4, 1.4826 * med(a.map((x) => Math.abs(x - m[k])))));
+    const m = v.map(med), sd = v.map((a, q) => Math.max(q ? 2 : 4, 1.4826 * med(a.map((x) => Math.abs(x - m[q])))));
     return [m, sd];
   };
   const H = fin(hs), S = robust(sk), B = fin(bs);
   const d2 = (L, A, Bb, [m, sd]) => ((L - m[0]) / sd[0]) ** 2 * 0.6 + ((A - m[1]) / sd[1]) ** 2 + ((Bb - m[2]) / sd[2]) ** 2;
   // the hair's own shadows (between strands) are darker than its mean: lightness counts little below it
   const dHair = (L, A, Bb) => d2(L < H[0][0] ? H[0][0] - (H[0][0] - L) * 0.4 : L, A, Bb, H);
-  for (let i = 0; i < n; i++) {
-    const x = i % w, y = (i - x) / w, j = (b.y0 + y) * img.w + b.x0 + x;
-    const r = reach.data[j];
-    if (r <= 0 && h.data[j] <= 0 && skin.data[j] <= 0) continue;
+  const clip = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  const OVR = I.fimg(lw, lh, 1), GROW = I.fimg(lw, lh, 1), CUT = I.fimg(lw, lh, 1);
+  for (let i = 0; i < ln; i++) {
     const L = lab.data[3 * i], A = lab.data[3 * i + 1], Bb = lab.data[3 * i + 2];
     const eh = Math.exp(-dHair(L, A, Bb) / 2), es = S ? Math.exp(-d2(L, A, Bb, S) / 2) : 0, eb = B ? Math.exp(-d2(L, A, Bb, B) / 2) : 0;
     const sum = eh + es + eb + 1e-9, pHair = eh / sum, pSkin = es / sum;
-    // what the models call skin stays skin — unless it clearly looks like this hair, not like this skin
-    const sk = Math.max(skin.data[j] * (1 - Math.min(1, Math.max(0, (pHair - pSkin) / 0.5))), skin.data[j] * inner.data[j]);
-    // hair-coloured inside the reach: filled, in proportion (thin hair over skin at the temples is half
-    // dyed, not left a dark wedge); the background's own look decides against it
-    const grow = r * (1 - sk) * (1 - inner.data[j]) * Math.min(1, Math.max(0, (pHair - 0.3) / 0.45));
-    let v = Math.max(h.data[j] * (1 - sk), grow);
-    v *= 1 - Math.min(1, Math.max(0, (pSkin - 0.5) / 0.3)); // skin-coloured: out
-    h.data[j] = v;
+    OVR.data[i] = clip((pHair - pSkin) / 0.5); // «skin» that clearly looks like this hair
+    GROW.data[i] = clip((pHair - 0.3) / 0.45); // hair-coloured: filled in proportion
+    CUT.data[i] = clip((pSkin - 0.5) / 0.3); // skin-coloured: out
   }
+  const sample = (P, x, y) => { // bilinear, low-res pixel centres
+    const fx = Math.min(lw - 1, Math.max(0, (x + 0.5) * k - 0.5)), fy = Math.min(lh - 1, Math.max(0, (y + 0.5) * k - 0.5));
+    const x0 = fx | 0, y0 = fy | 0, x1 = Math.min(lw - 1, x0 + 1), y1 = Math.min(lh - 1, y0 + 1), tx = fx - x0, ty = fy - y0, d = P.data;
+    const top = d[y0 * lw + x0] + (d[y0 * lw + x1] - d[y0 * lw + x0]) * tx, bot = d[y1 * lw + x0] + (d[y1 * lw + x1] - d[y1 * lw + x0]) * tx;
+    return top + (bot - top) * ty;
+  };
+  for (let y = 0; y < bh; y++)
+    for (let x = 0; x < bw; x++) {
+      const j = (b.y0 + y) * img.w + b.x0 + x, r = reach.data[j];
+      if (r <= 0 && h.data[j] <= 0 && skin.data[j] <= 0) continue;
+      // what the models call skin stays skin — unless it clearly looks like this hair; inside the face's
+      // own outline (landmarks) the parsing is trusted as it is
+      const sk = Math.max(skin.data[j] * (1 - sample(OVR, x, y)), skin.data[j] * inner.data[j]);
+      const grow = r * (1 - sk) * (1 - inner.data[j]) * sample(GROW, x, y);
+      h.data[j] = Math.max(h.data[j] * (1 - sk), grow) * (1 - sample(CUT, x, y));
+    }
 }
 
 function sclera(img, ctx) {

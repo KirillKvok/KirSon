@@ -11,12 +11,14 @@
 //   Errors -> {id, error}.
 // On the graphics card a model that fails (an operator WebGPU cannot run, a lost device) is made again
 // on the processor and the request repeated: the result is the same, only slower.
-const GPU = new URL(import.meta.url).searchParams.get("gpu") === "1" && !!self.navigator.gpu;
+const Q = new URL(import.meta.url).searchParams;
+const GPU = Q.get("gpu") === "1" && !!self.navigator.gpu;
+const THREADS = Math.max(1, Math.min(4, Number(Q.get("threads")) || 1)); // js/device.js ONNX_THREADS
 const ready = (async () => {
   const ort = await import(GPU ? "../../vendor/ort/ort.webgpu.min.mjs" : "../../vendor/ort/ort.wasm.min.mjs");
   ort.env.logLevel = "error"; // not the notes on which nodes run where
   ort.env.wasm.wasmPaths = new URL("../../vendor/ort/", import.meta.url).href;
-  ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
+  ort.env.wasm.numThreads = self.crossOriginIsolated ? THREADS : 1;
   return ort;
 })();
 

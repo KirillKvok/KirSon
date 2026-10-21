@@ -1,9 +1,11 @@
+import { HELPERS } from "./device.js";
 // Main-thread side of the processing worker: "the newest request wins" for previews
 // (while one render runs, further requests only replace the pending one).
 
 export class Engine {
   constructor() {
-    this.worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+    // the helper thread count travels in the address (the worker has no localStorage of its own)
+    this.worker = new Worker(new URL(`./worker.js?helpers=${HELPERS}`, import.meta.url), { type: "module" });
     this.worker.onmessage = (e) => this._onMessage(e.data);
     this.nextId = 1;
     this.waiting = new Map(); // id -> {resolve, reject}

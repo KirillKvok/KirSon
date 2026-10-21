@@ -5,6 +5,7 @@
 // confidences (SEG_CLASSES), poses: [{pts, vis}], person: plane | null, hair: plane | null}
 import { FilesetResolver, FaceLandmarker, ImageSegmenter, InteractiveSegmenter, PoseLandmarker } from "../../vendor/mediapipe/vision_bundle.mjs";
 import { FACE_OVAL } from "./topology.js";
+import { ONNX_THREADS, GPU_ONNX } from "../device.js";
 
 export const SEG_CLASSES = ["background", "hair", "body_skin", "face_skin", "clothes", "other"];
 const ANALYSIS_SIDE = 1280;
@@ -59,10 +60,12 @@ function canvasOf(source, w, h, sx = 0, sy = 0, sw = null, sh = null) {
       else {
         const t = canvasOf(source, source.width, source.height);
         g.drawImage(t, 0, 0, w, h);
+        t.width = t.height = 0; // released now: Safari frees canvases late and counts them all
       }
     } else {
       const t = canvasOf(source, source.width, source.height);
       g.drawImage(t, sx, sy, sw, sh, 0, 0, w, h);
+      t.width = t.height = 0;
     }
   } else if (sw === null) g.drawImage(source, 0, 0, w, h);
   else g.drawImage(source, sx, sy, sw, sh, 0, 0, w, h);
@@ -219,12 +222,12 @@ const parseWaiting = new Map();
 
 // the graphics card (WebGPU) for the ONNX models: decided before the worker starts (its runtime differs)
 let gpu = false;
-export function setGpu(on) { if (!parser) gpu = !!on; }
+export function setGpu(on) { if (!parser) gpu = !!on && GPU_ONNX; }
 export const onnxInfo = () => onnxCall({ model: "info" });
 
 function parseWorker() {
   if (!parser) {
-    parser = new Worker(new URL(`./onnx-worker.js${gpu ? "?gpu=1" : ""}`, import.meta.url), { type: "module" });
+    parser = new Worker(new URL(`./onnx-worker.js?gpu=${gpu ? 1 : 0}&threads=${ONNX_THREADS}`, import.meta.url), { type: "module" });
     parser.onmessage = (e) => {
       const w = parseWaiting.get(e.data.id);
       parseWaiting.delete(e.data.id);
@@ -259,9 +262,11 @@ export async function parseFaces(full, faces) {
     const x = new Float32Array(3 * n);
     for (let i = 0; i < n; i++)
       for (let ch = 0; ch < 3; ch++) x[ch * n + i] = (px[4 * i + ch] / 255 - MEAN[ch]) / STD[ch];
+    c.width = c.height = 0;
     f.parse = await parseCall(x);
     f.parseBox = [X0 / W, Y0 / H, X1 / W, Y1 / H];
   }
+  if (src) src.width = src.height = 0;
 }
 
 // --- object removal (MI-GAN) -------------------------------------------------------------------------
