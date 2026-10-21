@@ -7,6 +7,7 @@ export class Engine {
     // the helper thread count travels in the address (the worker has no localStorage of its own)
     this.worker = new Worker(new URL(`./worker.js?helpers=${HELPERS}`, import.meta.url), { type: "module" });
     this.worker.onmessage = (e) => this._onMessage(e.data);
+    this.worker.onerror = (e) => console.error(`processing worker: ${e.message || "failed"} @ ${e.filename || ""}:${e.lineno || ""}`); // in the problem report
     this.nextId = 1;
     this.waiting = new Map(); // id -> {resolve, reject}
     this.busy = false;

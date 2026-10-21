@@ -652,3 +652,7 @@ input[type=range]::-moz-range-thumb {
 .share-qr svg { display: block; width: 100%; height: auto; }
 .share-actions { display: grid; gap: 8px; }
 .share-actions button { border-radius: 14px; padding: 11px; font-size: 15px; }
+
+/* the problem report when the clipboard is not allowed: selectable text */
+.report-box { position: fixed; z-index: 60; left: 16px; right: 16px; top: 80px; height: 50vh; padding: 12px;
+  font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; color: var(--ink, #34343A); border-radius: 18px; resize: none; }

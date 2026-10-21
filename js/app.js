@@ -1,5 +1,6 @@
 // KirSon web — interface. Persona-like: the photo, one slider for the chosen tool, a row of the
 // tab's tools, tabs. Processing runs in a worker (engine.js); the original never leaves the phone.
+import * as report from "./report.js"; // first: catches errors from everything below
 import "./ops/index.js";
 import { ORDER } from "./ops/index.js";
 import { REGISTRY, Pipeline, defaults, isIdentity } from "./core/pipeline.js";
@@ -1953,6 +1954,7 @@ async function openFile(file, { restoring = false } = {}) {
   try {
     const img = await decode(file);
     let [w, h] = [img.width, img.height];
+    report.note("фото", `${file.type || "?"} ${Math.round((file.size || 0) / 1e5) / 10} МБ, ${w}×${h}`);
     if (w * h > MAX_PIXELS) [w, h] = scaled({ width: w, height: h }, Math.floor(Math.sqrt(MAX_PIXELS * Math.max(w, h) / Math.min(w, h))));
     app.original = imageData(img, w, h);
     app.analysis = null; // the previous photo's analysis must not answer for this one
@@ -2013,6 +2015,7 @@ async function runAnalysis(imageId) {
     app.analysis = a;
     engine.setAnalysis(a);
     console.debug(`analysis ${Math.round(performance.now() - t)} ms, faces ${a.faces.length}`);
+    report.note("анализ", `${Math.round(performance.now() - t)} мс, лиц ${a.faces.length}`);
     if (!a.faces.length) toast("Лицо не найдено — ретушь лица недоступна");
     requestRender();
     if (a.faces.length && device.FACE_PARSING) refineFaces(a, imageId);
@@ -2246,6 +2249,7 @@ async function exportPhoto(size, social = null) {
   toast(size === "full" ? "Обрабатываю в полном размере…" : "Обрабатываю…", 0);
   // if Safari runs out of memory it reloads the tab: the next start restores the work
   await session.save({ exporting: size === "full", state: snapshot() });
+  report.note("сохранение", social || size);
   try {
     let src = app.original;
     if (size === "optimal" && Math.max(src.width, src.height) > EXPORT_PHONE) {
@@ -2379,6 +2383,7 @@ if (device.SAFE > 0) {
   off.onclick = (e) => { e.preventDefault(); device.resetSafe(); location.reload(); };
   note.append(off);
 }
+if (device.CRASHED_OPENING) report.note("сбой", `вкладка закрылась при открытии фото → облегчённый режим ${device.SAFE}`);
 if (device.CRASHED_OPENING)
   setTimeout(() => toast("В прошлый раз телефону не хватило памяти — включил облегчённый режим. Откройте фото снова", 6000), 800);
 
@@ -2436,6 +2441,7 @@ async function restoreSession(s) {
 acceptSharedPreset().then((shared) => shared ? null : session.load()).then((s) => {
   if (!s?.file || app.preview) return;
   if (s.exporting) {
+    report.note("сбой", "вкладка закрылась при сохранении полного размера");
     savePref("optimal");
     session.save({ exporting: false }); // say it once
     restoreSession(s).then(() => toast("Полный размер не поместился в память телефона. Правки сохранены — сохраните «Лёгкий» вариант.",
@@ -2450,7 +2456,27 @@ function showEditorTour() {
   resetZoom();
   runTour("editor", editorSteps());
 }
-$("btn-help").onclick = () => (app.preview ? showEditorTour() : runTour("welcome", welcomeSteps()));
+const showHelp = () => (app.preview ? showEditorTour() : runTour("welcome", welcomeSteps()));
+$("btn-help").onclick = () => toast("Помощь", 6000, [["Подсказки", () => { hideToast(); showHelp(); }],
+  ["Сообщить о проблеме", sendProblem]]);
+
+// the log of the last errors and steps with the device's details — sent in a messenger (no server here)
+async function sendProblem() {
+  hideToast();
+  const r = await report.sendReport();
+  if (r === "copied") toast("Отчёт скопирован — вставьте его в сообщение разработчику", 4000);
+  else if (r && r !== "shared") { // no clipboard: the text to select by hand
+    const box = document.createElement("textarea");
+    box.className = "report-box glass";
+    box.readOnly = true;
+    box.value = r;
+    box.onblur = () => box.remove();
+    document.body.appendChild(box);
+    box.focus();
+    box.select();
+    toast("Выделите текст и скопируйте его", 4000);
+  }
+}
 if (!seen("welcome")) setTimeout(() => { if (!app.preview) runTour("welcome", welcomeSteps()); }, 600);
 if ("serviceWorker" in navigator && !["localhost", "127.0.0.1"].includes(location.hostname)) {
   // updateViaCache "none": the browser checks sw.js itself on every start (no stale copy)
