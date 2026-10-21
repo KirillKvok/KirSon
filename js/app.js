@@ -2114,8 +2114,10 @@ function save() {
   const extra = [["Для соцсетей", saveSocial], ...(videoSupported() ? [["Видео до/после", saveVideo]] : [])];
   if (Math.max(W, H) <= EXPORT_PHONE) return toast("Сохранить фото", 0, [[`Полный · ${W}×${H}`, () => exportPhoto("full")], ...extra]);
   const [w, h] = scaled(app.original, EXPORT_PHONE);
-  const full = [`Полный · ${W}×${H}`, () => exportPhoto("full")], opt = [`Лёгкий · ${w}×${h}`, () => exportPhoto("optimal")];
-  toast("Сохранить фото", 0, [...(sizePref() === "optimal" ? [opt, full] : [full, opt]), ...extra]);
+  // the full size always first: after one memory failure the light copy used to come first for good,
+  // and a habitual tap saved a smaller photo («качество хуже»)
+  const full = [`Полный · ${W}×${H}`, () => exportPhoto("full")], opt = [`Лёгкий · ${w}×${h} (если мало памяти)`, () => exportPhoto("optimal")];
+  toast("Сохранить фото", 0, [full, opt, ...extra]);
 }
 
 // the faces lead a social crop when the frame is the photo's own (otherwise the frame's centre)
@@ -2177,7 +2179,7 @@ async function exportPhoto(size, social = null) {
       c.height = image.height;
       c.getContext("2d").putImageData(image, 0, 0);
     }
-    const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", social ? 0.92 : 0.95));
+    const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", social ? 0.92 : 0.97)); // as the desktop (q97)
     const suffix = social ? FORMATS[social].suffix : "kirson";
     savedFile = new File([blob], `${app.name}_${suffix}.jpg`, { type: "image/jpeg" });
     session.save({ exporting: false });
