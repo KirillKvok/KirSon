@@ -356,12 +356,97 @@ function hair(img, ctx) {
   const edge = perFace(shape([T.FACE_OVAL], 0.05, 0.15))(img, ctx);
   for (let i = 0; i < reach.data.length; i++)
     reach.data[i] *= Math.min(1, near.data[i] * 1.5) * Math.min(1, Math.max(fresh.data[i] * 5, p ? p.data[i] * 1.5 : 0, edge.data[i]));
+  // long hair lying on the shoulders: both hair models lose it there and the dye stopped across the strands.
+  // Further down (to ~14 % of the photo below the confident hair) hair-coloured pixels count too — but only
+  // inside the person's silhouette (a dark curtain behind is not hair) and not on bare skin
+  const person = personConf(ctx, img.w, img.h), body = segClass(ctx, "body_skin", img.w, img.h);
+  const long = I.resizeLinear(I.gaussian(dilate(I.mapPlane(I.resize(hc, sw, sh), (v) => (v > 0.35 ? 1 : 0)),
+    Math.max(1, Math.round(Math.max(sw, sh) * 0.14))), 3), img.w, img.h);
+  for (let i = 0; i < reach.data.length; i++) {
+    const r = long.data[i] * clip01((person.data[i] - 0.35) / 0.3) * (1 - clip01((body.data[i] - 0.3) / 0.4));
+    if (r > reach.data[i]) reach.data[i] = r;
+  }
   // inside the face's own outline (landmarks) the parsing's skin is trusted as it is: a shadowed
   // face edge looks hair-like by colour and got a light rim when dyed blond
   const inner = perFace(shape([T.FACE_OVAL], 0.02, 0.01))(img, ctx);
   hairColour(img, h, skin, reach, inner);
-  return snap(img, h);
+  return softHair(img, h);
 }
+
+// The hair's edge as a soft matte: a wider guided filter with a larger eps than `snap` — single strands and
+// the fringe against the background get partial values (a hard snap cut the hair out like a sticker), then a
+// slight blur so no pixel steps from dyed to not dyed
+function softHair(img, conf) {
+  const L = Math.max(img.w, img.h), radius = Math.max(2, L * 0.006);
+  const b = I.bbox(conf, Math.round(3 * radius) + 2);
+  if (!b) return I.plane(img.w, img.h);
+  const gray = I.luminance(roiFloat(img, b));
+  const m = I.clamp01(I.guidedFast(gray, I.crop(conf, b), radius, 2e-3, L > 2000 ? 0.5 : 1));
+  const soft = I.clamp01(I.gaussian(m, Math.max(0.6, L * 0.0008)));
+  unmix(roiFloat(img, b), soft, L);
+  const out = I.plane(img.w, img.h);
+  I.paste(out, soft, b);
+  return out;
+}
+
+// Local matting on the soft edge: a pixel there is a mix of the hair's colour F and the background's B
+// next to it (normalised blurs of the sure hair / sure background); its share of hair is the projection
+// α = (I − B)·(F − B) / |F − B|². Where F and B are far apart (dark hair on a grey wall, hair over the
+// forehead) that α replaces the mask — the wall stops being dyed (a glowing outline around the head);
+// where they look alike (dark hair on a dark curtain) the mask stays.
+function unmix(f, m, L) {
+  const { w, h } = m, n = w * h, sigma = Math.max(1.5, L * 0.008);
+  const sure = I.plane(w, h), bg = I.plane(w, h);
+  for (let i = 0; i < n; i++) { sure.data[i] = m.data[i] > 0.92 ? 1 : 0; bg.data[i] = m.data[i] < 0.04 ? 1 : 0; }
+  // the two colours around each pixel, on a quarter-size copy (they are smooth)
+  const s = Math.min(1, 400 / Math.max(w, h)), sw = Math.max(2, Math.round(w * s)), sh = Math.max(2, Math.round(h * s));
+  const small = I.resize(f, sw, sh), ws = I.resize(sure, sw, sh), wb = I.resize(bg, sw, sh);
+  // kept small and read bilinearly per pixel: full-size colour planes of a 12 MP photo were ~200 MB
+  // (iPhone Safari closes the tab over its limit)
+  const mean = (wt) => {
+    const num = I.fimg(sw, sh, 3);
+    for (let i = 0; i < sw * sh; i++) for (let c = 0; c < 3; c++) num.data[3 * i + c] = small.data[3 * i + c] * wt.data[i];
+    const nb = I.gaussian(num, sigma * s), db = I.gaussian(wt, sigma * s);
+    for (let i = 0; i < sw * sh; i++) for (let c = 0; c < 3; c++) num.data[3 * i + c] = db.data[i] > 1e-3 ? nb.data[3 * i + c] / db.data[i] : 0;
+    return [num, db];
+  };
+  const [F, fd] = mean(ws), [B, bd] = mean(wb);
+  // the edge zone: near the mask's boundary whatever its value (at a hard hair / skin edge the mask is ~1
+  // right up to the skin, and those mixed pixels glowed as a rim once dyed), not deep inside (a parting)
+  const deep = I.gaussian(m, Math.max(1, L * 0.003));
+  const kx = sw / w, ky = sh / h, fc = [0, 0, 0], bc = [0, 0, 0];
+  // bilinear read of the small planes at full-size pixel (x, y); returns the weight plane's value
+  const read = (P, D, x, y, out) => {
+    const fx = Math.min(sw - 1, Math.max(0, (x + 0.5) * kx - 0.5)), fy = Math.min(sh - 1, Math.max(0, (y + 0.5) * ky - 0.5));
+    const x0 = fx | 0, y0 = fy | 0, x1 = Math.min(sw - 1, x0 + 1), y1 = Math.min(sh - 1, y0 + 1), tx = fx - x0, ty = fy - y0;
+    const w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty), w01 = (1 - tx) * ty, w11 = tx * ty;
+    const a = y0 * sw + x0, b = y0 * sw + x1, c = y1 * sw + x0, d = y1 * sw + x1;
+    for (let q = 0; q < 3; q++) out[q] = P.data[3 * a + q] * w00 + P.data[3 * b + q] * w10 + P.data[3 * c + q] * w01 + P.data[3 * d + q] * w11;
+    return D.data[a] * w00 + D.data[b] * w10 + D.data[c] * w01 + D.data[d] * w11;
+  };
+  for (let i = 0; i < n; i++) {
+    const v = m.data[i];
+    const zone = Math.min(1, Math.max(0, (0.985 - deep.data[i]) / 0.12));
+    if (v <= 0.02 || zone <= 0) continue;
+    const x = i % w, y = (i - x) / w;
+    if (read(F, fd, x, y, fc) < 0.01 || read(B, bd, x, y, bc) < 0.01) continue;
+    let dot = 0, len = 0;
+    for (let c = 0; c < 3; c++) {
+      const fb = fc[c] - bc[c];
+      dot += (f.data[3 * i + c] - bc[c]) * fb;
+      len += fb * fb;
+    }
+    const sep = Math.sqrt(len), trust = Math.min(1, Math.max(0, (sep - 0.06) / 0.1));
+    if (trust <= 0) continue;
+    const a = Math.min(1, Math.max(0, dot / len));
+    // never more hair than the models allowed (+15 %)
+    m.data[i] = v + trust * zone * (Math.min(v * 1.15, a) - v);
+  }
+  // per-pixel α is noisy (grain, jpeg): a light blur, so the edge is soft and whole, not speckled
+  const sm = I.gaussian(m, Math.max(0.6, L * 0.0005)); // small: a wider blur put a rim of dye on the cheek
+  m.data.set(sm.data);
+}
+const clip01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 // what is surely not hair: the parsing's skin, nose, ears, neck (sharp) and the segmenter's face / body
 // skin (256 px, blurry: only where it is sure)
@@ -426,15 +511,18 @@ function hairColour(img, h, skin, reach, inner) {
   const H = fin(hs), S = robust(sk), B = fin(bs);
   const d2 = (L, A, Bb, [m, sd]) => ((L - m[0]) / sd[0]) ** 2 * 0.6 + ((A - m[1]) / sd[1]) ** 2 + ((Bb - m[2]) / sd[2]) ** 2;
   // the hair's own shadows (between strands) are darker than its mean: lightness counts little below it
-  const dHair = (L, A, Bb) => d2(L < H[0][0] ? H[0][0] - (H[0][0] - L) * 0.4 : L, A, Bb, H);
+  // lighter than the hair counts double (a grey shadow on a white shirt is not dark hair)
+  const dHair = (L, A, Bb) => (L < H[0][0] ? d2(H[0][0] - (H[0][0] - L) * 0.4, A, Bb, H) : d2(L, A, Bb, H) + ((L - H[0][0]) / H[1][0]) ** 2 * 1.2);
   const clip = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
   const OVR = I.fimg(lw, lh, 1), GROW = I.fimg(lw, lh, 1), CUT = I.fimg(lw, lh, 1);
   for (let i = 0; i < ln; i++) {
     const L = lab.data[3 * i], A = lab.data[3 * i + 1], Bb = lab.data[3 * i + 2];
-    const eh = Math.exp(-dHair(L, A, Bb) / 2), es = S ? Math.exp(-d2(L, A, Bb, S) / 2) : 0, eb = B ? Math.exp(-d2(L, A, Bb, B) / 2) : 0;
+    const dh = dHair(L, A, Bb), eh = Math.exp(-dh / 2), es = S ? Math.exp(-d2(L, A, Bb, S) / 2) : 0, eb = B ? Math.exp(-d2(L, A, Bb, B) / 2) : 0;
     const sum = eh + es + eb + 1e-9, pHair = eh / sum, pSkin = es / sum;
+    // a colour far from every class (a white shirt) has a meaningless share: it must also be near the hair
+    const like = clip((14 - dh) / 7);
     OVR.data[i] = clip((pHair - pSkin) / 0.5); // «skin» that clearly looks like this hair
-    GROW.data[i] = clip((pHair - 0.3) / 0.45); // hair-coloured: filled in proportion
+    GROW.data[i] = clip((pHair - 0.3) / 0.45) * like; // hair-coloured: filled in proportion
     CUT.data[i] = clip((pSkin - 0.5) / 0.3); // skin-coloured: out
   }
   const sample = (P, x, y) => { // bilinear, low-res pixel centres
