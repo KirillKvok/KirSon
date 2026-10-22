@@ -681,13 +681,18 @@ async function runAuto() {
   if (!app.analysis) return toast("Подождите — фото ещё анализируется");
   $("busy").hidden = false;
   try {
-    applyValues(await engine.auto("preview"));
+    const vals = await engine.auto("preview");
+    applyValues(vals);
     app.look = null;
     pushHistory();
     addVersion("Авто");
     renderTools();
     requestRender();
-    toast("Подобрано под это фото — можно подправить на вкладках");
+    // what it touched, in her words; one tap takes it all back
+    const groups = [["кожа", ["skin", "skin_natural", "skin_tone", "face_light", "face_detail", "teeth_eyes"]],
+      ["свет", ["light", "brightness", "contrast"]], ["цвет", ["color"]], ["одежда", ["clothes"]], ["чёткость", ["sharpen"]]]
+      .filter(([, ops]) => ops.some((op) => vals[op])).map(([name]) => name);
+    toast(`Авто: ${groups.join(" · ") || "фото уже в порядке"}. Подправить — на вкладках`, 5000, [["Отменить", () => { hideToast(); undo(); }]]);
   } catch (err) {
     console.error(err);
   }

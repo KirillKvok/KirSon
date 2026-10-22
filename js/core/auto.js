@@ -5,6 +5,7 @@ import { getAnalysis, getMask, refFaceWidth } from "../face/masks.js";
 import { blemishMask } from "../ops/skin.js";
 import { nblur } from "../ops/tone.js";
 import { zones } from "../ops/detail.js";
+import { skinCast } from "../ops/basic.js";
 
 function measure(img, ctx) {
   if (!getAnalysis(ctx).faces.length) return null;
@@ -44,14 +45,36 @@ function measure(img, ctx) {
 
 const ramp = (x, lo, hi, a, b) => Math.round(a + Math.min(1, Math.max(0, (x - lo) / (hi - lo))) * (b - a));
 
+// The whole photo: exposure, clipped highlights, flat contrast (lightness percentiles over every 7th pixel)
+function photoLight(img) {
+  const f = I.toFloat(img), Ls = [];
+  for (let i = 0; i < f.data.length; i += 21) {
+    const y = 0.2126 * f.data[i] + 0.7152 * f.data[i + 1] + 0.0722 * f.data[i + 2];
+    Ls.push(116 * Math.cbrt(Math.max(0.008856, y)) - 16);
+  }
+  const p = (q) => I.percentile(Ls, q), clipped = Ls.filter((v) => v > 97).length / Ls.length;
+  return {
+    brightness: { amount: ramp(42 - p(0.5), 0, 15, 0, 20) },
+    light: { highlights: -ramp(clipped, 0.01, 0.06, 0, 35) },
+    contrast: { amount: ramp(60 - (p(0.95) - p(0.05)), 0, 20, 0, 15) },
+  };
+}
+
 export function suggest(img, ctx) {
-  const m = measure(img, ctx);
+  const m = measure(img, ctx), whole = photoLight(img);
+  const merge = (vals) => {
+    for (const [op, d] of Object.entries(whole)) vals[op] = { ...(vals[op] || {}), ...d };
+    const cast = skinCast(img, ctx); // the lamp's colour cast, read off the face
+    if (cast && Math.abs(cast.hue - 55) > 3) vals.color = { ...(vals.color || {}), skin_wb: 70 };
+    if (getAnalysis(ctx).poses.length) vals.clothes = { smooth: 30 }; // creased clothes: a little
+    return vals;
+  };
   if (!m) {
     const L = I.rgbToLab(I.toFloat(img)), Ls = [];
     for (let i = 0; i < L.data.length; i += 3) Ls.push(L.data[i]);
-    return { light: { shadows: ramp(55 - I.percentile(Ls, 0.5), 0, 25, 0, 30) } };
+    return keep(merge({ light: { shadows: ramp(55 - I.percentile(Ls, 0.5), 0, 25, 0, 30) } }));
   }
-  const vals = {
+  const vals = merge({
     skin: { smooth: ramp(m.roughness, 1, 2.2, 25, 60), blemish: ramp(m.spots, 0.003, 0.03, 40, 85) },
     skin_natural: { texture: 25 },
     skin_tone: { even: 30, redness: ramp(m.redness, 6, 14, 0, 60) },
@@ -61,7 +84,12 @@ export function suggest(img, ctx) {
     light: { shadows: ramp(60 - m.faceL, 0, 20, 0, 30) },
     color: { vibrance: 10 },
     sharpen: { sharpness: 20 },
-  };
+  });
+  return keep(vals);
+}
+
+// only what changes something (zeros dropped)
+function keep(vals) {
   const out = {};
   for (const [op, d] of Object.entries(vals)) {
     const kept = Object.fromEntries(Object.entries(d).filter(([, v]) => v));
