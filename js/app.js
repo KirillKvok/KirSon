@@ -111,7 +111,7 @@ const TABS = [
     tools: [
       ...HAIR_NAMES.map((n, k) => ({ op: "hair", param: "color", option: k, label: k ? n : "Свой цвет" })),
       { op: "hair", param: "thick" }, { op: "hair", param: "volume" }, { op: "hair", param: "amount" },
-      { op: "hair", param: "shine" }, { op: "hair", param: "roots" },
+      { op: "hair", param: "shine" }, { op: "hair", param: "natural" }, { op: "hair", param: "roots" },
     ],
   },
   {
@@ -975,6 +975,7 @@ const TIPS = {
   enhance: "Нейросеть дорисует детали маленьким и размытым фото и увеличит их.",
   presetSave: "Сохраните правки как свой пресет — он работает с любым фото. Удерживайте пресет, чтобы поделиться им.",
   objectRemove: "Нейросеть уберёт выделенный предмет и дорисует фон.",
+  "hair.natural": "Корни остаются своего цвета, а краска плавно начинается ниже — как у отросших или омбре.",
   "hair.thick": "Затягивает просветы и пробор — волосы выглядят гуще.",
   "relight.amount": "Мягкий студийный свет на лицо — направление выбирается кнопками «Свет: …».",
   "makeup.shadow": "Тени для век — оттенок выбирается цветными кнопками рядом.",

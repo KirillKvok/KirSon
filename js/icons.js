@@ -104,7 +104,7 @@ const BY_PARAM = {
   "body.waist": "waist", "body.hips": "hips", "body.legs": "legs", "body.length": "length", "body.arms": "arms",
   "body.shoulders": "shoulders", "body.neck": "neck", "body.level": "shoulders", "clothes.smooth": "smooth",
   "makeup.lips": "lips", "makeup.blush": "cheek", "makeup.brows": "brows", "makeup.eyeliner": "eyeliner", "makeup.contour": "contour", "makeup.shadow": "eyeshadow", "makeup.mascara": "lashes", "makeup.highlight": "sparkle", "makeup.iris": "iris",
-  "hair.thick": "hair", "hair.volume": "volume", "hair.amount": "dropHalf", "hair.shine": "sparkle", "hair.roots": "roots",
+  "hair.thick": "hair", "hair.volume": "volume", "hair.amount": "dropHalf", "hair.shine": "sparkle", "hair.roots": "roots", "hair.natural": "roots",
   "background.blur": "blur", "background.brightness": "sun", "background.saturation": "dropHalf",
   "object.brightness": "sun", "object.contrast": "contrast", "object.saturation": "dropHalf", "object.sharpness": "blur",
   "crop.angle": "tilt",

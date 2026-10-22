@@ -106,8 +106,9 @@ function volumeField(img, ctx, hair, amount) {
 // to a highlight glowed as a rim.
 const absDiff = (a, b) => I.mapPlane(a, (v, i) => Math.abs(v - b.data[i]));
 
-function dye(img, hair, fw, pal, k) {
-  return labEdit(img, hair, fw, (lab, m) => {
+// `natural`: a plane (or null) of how much of the photo's own colour stays — the natural roots
+function dye(img, hair, fw, pal, k, natural = null) {
+  return labEdit(img, hair, fw, (lab, m, keep) => {
     const { w, h } = m, n = w * h, L = chan(lab, 0);
     // the base below the strands: what is finer (strands, grain) is carried over, scaled with the new lightness
     const base = I.gaussian(L, Math.max(1, fw * 0.008)); // strands and clumps of strands both read on light hair
@@ -177,7 +178,7 @@ function dye(img, hair, fw, pal, k) {
       // pixel is a wall, whatever the mask says
       const deep = clip((mass.data[i] - 0.85) / 0.1);
       const gate = deep + (1 - deep) * Math.max(textured * (core + (1 - core) * likeHair(Lv, A, B)), stray);
-      const wgt = clip((mm - 0.06) / 0.86) * gate * k
+      const wgt = clip((mm - 0.06) / 0.86) * gate * k * (keep ? 1 - keep.data[i] : 1)
         * Math.max(stray, clip(1 - (Lv - mL - 25) / 20));
       if (wgt <= 0) continue;
       const u = uOf(bl), T = tone(u);
@@ -193,12 +194,12 @@ function dye(img, hair, fw, pal, k) {
       lab.data[j + 1] = A + wgt * (nA - A);
       lab.data[j + 2] = B + wgt * (nB - B);
     }
-  });
+  }, ...(natural ? [natural] : []));
 }
 
 register("hair", "Волосы", [choice("color", "Цвет волос", HAIR_NAMES, 0), P("amount", "Сила цвета", 0, 100, 70),
   P("shine", "Блеск", 0, 100, 0), P("volume", "Объём", 0, 100, 0), P("roots", "Закрасить корни", 0, 100, 0),
-  P("thick", "Гуще", 0, 100, 0)],
+  P("thick", "Гуще", 0, 100, 0), P("natural", "Свои корни", 0, 100, 0)],
   (img, p, ctx) => {
     const fw = refFaceWidth(img, ctx), hair = getMask(img, ctx, "hair");
     if (!I.bbox(hair, 0)) return img;
@@ -220,7 +221,16 @@ register("hair", "Волосы", [choice("color", "Цвет волос", HAIR_NA
       }
     }
     if (p.thick > 0) out = thicker(out, hair, fw, p.thick / 100); // before the dye: gaps take the new colour too
-    if (p.color > 0 && p.amount > 0) out = dye(out, hair, fw, HAIR_PALETTES[HAIR_NAMES[p.color]], p.amount / 100);
+    if (p.color > 0 && p.amount > 0) {
+      // «Свои корни»: at the scalp the hair keeps its own colour and the dye begins gradually down the lengths
+      // (a soft zone around the crown — never a horizontal line)
+      let natural = null;
+      if (p.natural > 0) {
+        const r = rootsMask(out, ctx, hair, fw), kn = p.natural / 100;
+        natural = I.mapPlane(r, (v, i) => (hair.data[i] > 0.01 ? clip((v / Math.max(0.05, hair.data[i])) * 1.25) * kn * 0.9 : 0));
+      }
+      out = dye(out, hair, fw, HAIR_PALETTES[HAIR_NAMES[p.color]], p.amount / 100, natural);
+    }
     if (p.shine > 0) {
       const k = p.shine / 100, sigma = Math.max(1, fw * 0.01);
       out = labEdit(out, hair, fw, (lab, m) => {
