@@ -469,6 +469,7 @@ export const MASKS = {
   hair_skin: hairSkin, // (inspection)
   hair_raw: (img, ctx) => resized(ctx, "hairseg", getAnalysis(ctx).hair, img.w, img.h), // (inspection)
   person: (img, ctx) => refinedClass(img, ctx, "person"),
+  clothes: (img, ctx) => refinedClass(img, ctx, "clothes"),
   lips,
   mouth_inner: perFace(shape([T.LIPS_INNER], 0.004)),
   teeth: perFace(teeth),

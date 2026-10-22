@@ -8,7 +8,9 @@ import { FACE_TAB } from "./skin.js";
 import { frame } from "./detail.js";
 
 const SLIM_MAX = 0.08, JAW_MAX = 0.065, CHIN_MAX = 0.08, EYES_MAX = 0.3, NOSE_MAX = 0.45, LIPS_MAX = 0.25;
-const SMILE_MAX = 0.03, EYE_OPEN_MAX = 0.3, SYM_MAX_MOVE = 0.04;
+const SMILE_MAX = 0.03, EYE_OPEN_MAX = 0.3, SYM_MAX_MOVE = 0.04, DOUBLE_CHIN_MAX = 0.045;
+// the lower jaw line (chin and the jaw towards the ears' corners)
+const LOWER_JAW = [152, 148, 176, 149, 150, 136, 377, 400, 378, 379, 365];
 const JAW_RIGHT = [172, 136, 150, 149, 58, 132], JAW_LEFT = [397, 365, 379, 378, 288, 361];
 const CHIN_PTS = [152, 148, 377, 176, 400], ALAR = [49, 279], MOUTH_CORNERS = [61, 291];
 const MIDLINE = [168, 6, 197, 195, 5, 4, 1, 0, 17, 152];
@@ -102,12 +104,22 @@ export function shapeFace(field, p, fw, val) {
   }
   if (val.eye_open) for (const [eye, a, b] of eyes) field.scale(mean(p, eye), (val.eye_open / 100) * EYE_OPEN_MAX, 0.9 * dist(p[a], p[b]), v);
   if (val.symmetry) symmetry(field, p, fw, u, v, val.symmetry / 100);
+  if (val.double_chin > 0) {
+    // the soft fold under the jaw goes up under the jaw line and the band below it is drawn tight; the
+    // jaw line itself is held by an opposite push (otherwise the whole chin rose): a sharper jaw
+    const k = (val.double_chin / 100) * DOUBLE_CHIN_MAX * fw;
+    for (const i of LOWER_JAW) {
+      const q = p[i], wgt = i === 152 ? 1 : 0.8;
+      field.push([q[0] + v[0] * 0.11 * fw, q[1] + v[1] * 0.11 * fw], [-v[0] * k * wgt, -v[1] * k * wgt], 0.06 * fw);
+      field.push([q[0] - v[0] * 0.02 * fw, q[1] - v[1] * 0.02 * fw], [v[0] * k * 0.25 * wgt, v[1] * k * 0.25 * wgt], 0.035 * fw);
+    }
+  }
 }
 
 register("face_shape", "Форма лица", [P("slim", "Овал уже", -100, 100, 0), P("jaw", "Челюсть уже", -100, 100, 0),
   P("chin", "Подбородок", -100, 100, 0), P("eyes", "Глаза больше", -100, 100, 0), P("nose", "Нос шире", -100, 100, 0),
   P("lips", "Губы больше", -100, 100, 0), P("smile", "Улыбка", -100, 100, 0), P("eye_open", "Глаза открытее", -100, 100, 0),
-  P("symmetry", "Симметрия", 0, 100, 0)], (img, p, ctx) => {
+  P("symmetry", "Симметрия", 0, 100, 0), P("double_chin", "Второй подбородок", 0, 100, 0)], (img, p, ctx) => {
   let out = img;
   for (const face of getAnalysis(ctx).faces) {
     const field = new Field();

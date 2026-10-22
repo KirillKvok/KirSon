@@ -13,7 +13,7 @@ const L_SH = 11, R_SH = 12, L_EL = 13, R_EL = 14, L_WR = 15, R_WR = 16;
 const L_HIP = 23, R_HIP = 24, L_KNEE = 25, R_KNEE = 26, L_ANK = 27, R_ANK = 28;
 const FEET = [27, 28, 29, 30, 31, 32];
 const WAIST_MAX = 0.08, HIPS_MAX = 0.08, LEGS_MAX = 0.14, ARMS_MAX = 0.16, LENGTH_MAX = 0.1;
-const SHOULDERS_MAX = 0.06, NECK_MAX = 0.07, MIN_VIS = 0.5, BG_BAND = 0.015;
+const SHOULDERS_MAX = 0.06, NECK_MAX = 0.07, MIN_VIS = 0.5, BG_BAND = 0.015, LEVEL_MAX = 0.85;
 
 const unit = (v) => { const n = Math.hypot(v[0], v[1]); return n > 1e-6 ? [v[0] / n, v[1] / n] : v; };
 const perp = (v) => [-v[1], v[0]];
@@ -139,11 +139,12 @@ function liftHead(w, h, b, shoulders, d) {
   return new Warp(x0, 0, mapX, mapY);
 }
 
-const ACTIVE = ["waist", "hips", "legs", "arms", "length", "shoulders", "neck"];
+const ACTIVE = ["waist", "hips", "legs", "arms", "length", "shoulders", "neck", "level"];
 
 register("body", "Фигура", [P("waist", "Талия уже", -100, 100, 0), P("hips", "Бёдра уже", -100, 100, 0),
   P("legs", "Ноги стройнее", -100, 100, 0), P("arms", "Руки стройнее", -100, 100, 0),
-  P("length", "Ноги длиннее", 0, 100, 0), P("shoulders", "Плечи уже", -100, 100, 0), P("neck", "Шея длиннее", 0, 100, 0)],
+  P("length", "Ноги длиннее", 0, 100, 0), P("shoulders", "Плечи уже", -100, 100, 0), P("neck", "Шея длиннее", 0, 100, 0),
+  P("level", "Плечи ровнее", 0, 100, 0)],
   (img, p, ctx) => {
     const { w, h } = img, a = getAnalysis(ctx);
     if (!a.poses.length) return img;
@@ -159,6 +160,15 @@ register("body", "Фигура", [P("waist", "Талия уже", -100, 100, 0),
       if (p.waist) b.sidePushes(field, add(s, t, 0.68 * tl), t, (p.waist / 100) * WAIST_MAX * sw, 0.16 * tl, 0.8 * sw, arms);
       if (p.hips) b.sidePushes(field, add(hp, t, 0.08 * tl), t, (p.hips / 100) * HIPS_MAX * sw, 0.16 * tl, 0.9 * sw, arms);
       if (p.shoulders) b.sidePushes(field, add(s, t, 0.1 * tl), t, (p.shoulders / 100) * SHOULDERS_MAX * sw, 0.2 * tl, 0.9 * sw);
+      // the shoulder line square to the body's axis: each shoulder half-way, the arm with it. Not for a body
+      // turned sideways (shoulders narrow against the torso) — there the slant is the turn, not a posture
+      if (p.level > 0 && sw > 0.55 * tl) {
+        const k = (p.level / 100) * LEVEL_MAX;
+        for (const i of [L_SH, R_SH]) {
+          const off = (b.p[i][0] - s[0]) * t[0] + (b.p[i][1] - s[1]) * t[1]; // along the axis (down +)
+          if (Math.abs(off) > 0.015 * sw) field.push(b.p[i], [-t[0] * off * k, -t[1] * off * k], 0.3 * sw);
+        }
+      }
       if (p.legs) for (const chain of [[L_HIP, L_KNEE, L_ANK], [R_HIP, R_KNEE, R_ANK]])
         if (b.ok(...chain)) b.limbPushes(field, chain, (p.legs / 100) * LEGS_MAX, 0.45 * sw, 0.12, hp);
       if (p.arms) for (const chain of [[L_SH, L_EL, L_WR], [R_SH, R_EL, R_WR]])
@@ -210,3 +220,28 @@ export function personMaskFor(img, ctx) {
   if (entry && entry[0] === img) return entry[1];
   return getMask(img, ctx, "person");
 }
+
+// «Разгладить одежду»: creases and crinkles of the fabric (the band between the finest weave and the
+// large shading of the body) are taken away. Both ends of the band are edge-preserving (guided filters),
+// and only low-contrast detail counts as a fold: prints, letters, seams and the outline stay as they are
+// (a Gaussian fine band left a bright frame around a print). Lightness only — colours keep their ratio.
+const FOLD_MAX = 0.16; // folds are soft: detail stronger than this is a print or a seam (letters: ~0.5)
+register("clothes", "Одежда", [P("smooth", "Разгладить одежду", 0, 100, 0)], (img, p, ctx) => {
+  if (!getAnalysis(ctx).poses.length) return img;
+  const mask = getMask(img, ctx, "clothes"), L = Math.max(img.w, img.h);
+  const b = I.bbox(mask, Math.round(L * 0.02), 0.2);
+  if (!b) return img;
+  const f = I.cropFloat(img, b), m = I.crop(mask, b), lum = I.luminance(f);
+  const fine = I.gaussian(lum, Math.max(0.7, L * 0.0008)); // only the weave and noise stay (lum − fine)
+  // the base entirely at a small size, then enlarged: the fast guided filter's output a·I + b at full size
+  // would carry the crinkles of I into the base (and taking it away sharpened them)
+  const sc = Math.min(1, 500 / Math.max(f.w, f.h)), small = I.resize(lum, f.w * sc, f.h * sc);
+  const base = I.resizeLinear(I.guidedFast(small, small, L * 0.012 * sc, 0.02, 1), f.w, f.h); // crinkles below eps, prints above
+  const k = p.smooth / 100, nl = I.clone(lum);
+  for (let i = 0; i < nl.data.length; i++) {
+    const fold = fine.data[i] - base.data[i], a = Math.abs(fold);
+    const soft = a < FOLD_MAX ? 1 : Math.max(0, 1 - (a - FOLD_MAX) / FOLD_MAX);
+    nl.data[i] = lum.data[i] - k * fold * soft * Math.min(1, Math.max(0, (m.data[i] - 0.3) / 0.4));
+  }
+  return I.withPart(img, I.scaleLuminance(f, nl, lum), b);
+}, { category: BODY_TAB, active: (p) => p.smooth > 0 });
