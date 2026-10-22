@@ -30,6 +30,7 @@ import * as session from "./session.js";
 import { FORMATS, fit, facesFocus } from "./social.js";
 import { videoSupported, record } from "./video.js";
 import { openCompare } from "./compare.js";
+import { openEdits } from "./edits.js";
 import { haptic } from "./haptics.js";
 import { editVideo, videoEditSupported, audioContext } from "./videoedit.js";
 
@@ -204,7 +205,9 @@ function values(op) {
   return { ...defaults(REGISTRY[op]), ...app.pipeline.step(op).values };
 }
 function setValue(op, param, v) {
-  app.pipeline.step(op).values[param] = v;
+  const st = app.pipeline.step(op);
+  st.values[param] = v;
+  st.enabled = true; // moving a switched-off edit's slider means she wants it back
 }
 // a saved edit (session, version, undo step) made before an operation existed: brought to the current
 // list of operations — the new ones at their defaults (otherwise their tools had no step to set)
@@ -232,6 +235,56 @@ function restore(s) {
   renderTools();
   requestRender();
   drawOverlay();
+  editsPanel?.refresh();
+}
+
+// --- «Мои правки»: the edits of this photo as a list, each can be switched off or removed -------------
+let editsPanel = null;
+const NOT_LISTED = ["face_select", "crop"]; // the chosen faces and the frame have their own tools
+const plural = (n, one, few, many) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? few : many}`;
+function editRows() {
+  const rows = [];
+  for (const st of app.pipeline.steps) {
+    const op = REGISTRY[st.op];
+    if (!op || NOT_LISTED.includes(st.op)) continue;
+    const v = { ...defaults(op), ...st.values }, parts = [];
+    for (const p of op.params) {
+      const x = v[p.name];
+      if (JSON.stringify(x) === JSON.stringify(p.def)) continue;
+      if (Array.isArray(x)) { if (x.length) parts.push(plural(x.length, "мазок", "мазка", "мазков")); }
+      else if (p.options) parts.push(`${p.label}: ${p.options[x] ?? x}`);
+      else if (!p.hidden) parts.push(`${p.label} ${x > 0 && p.min < 0 ? "+" : ""}${Math.round(x)}`);
+    }
+    if (st.op === "object" && v.x >= 0) parts.unshift(v.remove >= 0.5 ? "объект удалён" : "объект выбран");
+    if (st.op === "background" && v.image) parts.push("своя картинка");
+    if (!parts.length || (op.active && !op.active(v))) continue;
+    rows.push({ op: st.op, title: op.label, detail: parts.join(" · "), on: st.enabled !== false });
+  }
+  return rows;
+}
+function showEdits() {
+  if (!app.preview) return;
+  editsPanel = openEdits({
+    rows: editRows,
+    onToggle: (op) => {
+      const st = app.pipeline.step(op);
+      st.enabled = st.enabled === false;
+      pushHistory();
+      renderTools();
+      requestRender();
+      drawOverlay();
+    },
+    onReset: (op) => {
+      const st = app.pipeline.step(op);
+      st.values = op === "object" ? { x: -1, y: -1, remove: 0 } : {};
+      st.enabled = true;
+      app.look = null;
+      pushHistory();
+      renderTools();
+      requestRender();
+      drawOverlay();
+    },
+  });
 }
 function undo() {
   if (app.history.length < 2) return;
@@ -655,7 +708,7 @@ function versionThumb(image) {
 }
 
 function mineTools() {
-  const tools = [{ kind: "presetSave", label: "＋ Сохранить пресет" }];
+  const tools = [{ kind: "edits", label: "Мои правки" }, { kind: "presetSave", label: "＋ Сохранить пресет" }];
   for (const p of myPresets()) tools.push({ kind: "myPreset", preset: p, label: p.name });
   tools.push({ kind: "versionSave", label: "＋ Запомнить версию" });
   if (app.versions.length) tools.push({ kind: "compare", label: "Сравнить версии" });
@@ -732,6 +785,7 @@ function kindTool(t, b) {
     }
     if (t.kind === "version") return openVersion(t.version);
     if (t.kind === "compare") return compareVersions();
+    if (t.kind === "edits") return showEdits();
     if (t.kind === "batch") return startBatch();
     if (t.kind === "videoEdit") return startVideo();
     if (t.kind === "look") {
@@ -935,6 +989,7 @@ const TIPS = {
   bodyAuto: "Мягко подправит только те части фигуры, что видны в кадре.",
   faceBrush: "Сглаживание и пятна вручную: проведите пальцем там, где нужно, — или где сглаживание лишнее.",
   shapeBrush: "Пластика пальцем: тяните, сужайте, расширяйте где угодно. «Вернуть как было» убирает лишнее.",
+  edits: "Все правки этого фото списком: любую можно выключить или убрать, остальные останутся.",
   liquifyGrid: "Сетка показывает, где и насколько фото деформировано пластикой.",
   liquifyProtect: "Мазок по человеку не гнёт фон рядом: стены, двери и полки остаются прямыми. Мазок по фону двигает фон.",
   smartFrame: "Кадрирует по правилам портрета: глаза на верхней трети, место по направлению взгляда.",
@@ -1471,6 +1526,7 @@ function strokesOfTool() {
 function startStroke(cx, cy) {
   const [x, y] = toPhoto(cx, cy);
   stroke = [app.brush.mode, brushRadius(), app.brush.strength / 100, x, y];
+  app.pipeline.step(app.brush.tool).enabled = true; // painting with a switched-off brush turns it back on
   app.pipeline.step(app.brush.tool).values[brushParam()] = [...strokesOfTool(), stroke];
   app.dragging = app.brush.tool !== "heal"; // the patch looks right only in full quality
   showRing(cx, cy);

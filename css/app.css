@@ -656,3 +656,24 @@ input[type=range]::-moz-range-thumb {
 /* the problem report when the clipboard is not allowed: selectable text */
 .report-box { position: fixed; z-index: 60; left: 16px; right: 16px; top: 80px; height: 50vh; padding: 12px;
   font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; color: var(--ink, #34343A); border-radius: 18px; resize: none; }
+
+/* «Мои правки»: the list of this photo's edits with switches */
+.edits { position: fixed; z-index: 55; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(520px, calc(100vw - 32px));
+  max-height: min(44vh, 440px); display: flex; flex-direction: column; border-radius: 26px; padding: 12px 16px 8px; } /* the photo stays in view above */
+.edits-head { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 8px; font-size: 17px; }
+.edits-close svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.edits-list { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.edits-row { display: flex; align-items: center; gap: 12px; padding: 10px 2px; border-top: 1px solid rgba(120, 100, 90, 0.16); }
+.edits-row.off .edits-text { opacity: 0.45; }
+.edits-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.edits-text b { font-size: 15px; font-weight: 600; }
+.edits-text span { font-size: 13px; opacity: 0.75; overflow-wrap: anywhere; }
+.edits-empty { margin: 8px 2px 12px; opacity: 0.7; }
+.edits-switch { appearance: none; -webkit-appearance: none; flex: none; width: 46px; height: 28px; border-radius: 14px; margin: 0;
+  background: rgba(120, 100, 90, 0.25); position: relative; transition: background 0.2s; cursor: pointer; }
+.edits-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); transition: transform 0.2s; }
+.edits-switch:checked { background: #52372B; }
+.edits-switch:checked::after { transform: translateX(18px); }
+.edits-reset { flex: none; width: 34px; height: 34px; font-size: 22px; line-height: 1; }
+@media (prefers-color-scheme: dark) { .edits-switch:checked { background: #D9C7B8; } }
