@@ -15,12 +15,12 @@ import { MAKEUP_TAB } from "./makeup.js";
 export const HAIR_PALETTES = {
   "Шоколадный": [[12, 4, 5], [22, 7, 9], [38, 8, 13]],
   "Каштановый": [[14, 7, 8], [27, 11, 15], [44, 11, 19]],
-  "Медный": [[20, 16, 16], [38, 22, 28], [58, 18, 32]],
-  "Блонд": [[40, 5, 16], [60, 4, 20], [80, 2, 18]],
-  "Пепельный": [[32, 0, 2], [52, 0, 2], [72, -1, 1]],
+  "Медный": [[17, 15, 15], [36, 22, 29], [57, 18, 34]],
+  "Блонд": [[30, 8, 21], [55, 7, 27], [78, 4, 26]], // golden, with dark under-layers (not a grey wig)
+  "Пепельный": [[26, 1, 5], [49, 0, 5], [72, -1, 4]],
   "Чёрный": [[6, 1, 0], [12, 1, -1], [27, 0, -2]],
   "Бордо": [[11, 13, 3], [22, 20, 5], [38, 20, 6]],
-  "Розовый": [[42, 20, -2], [60, 23, -3], [77, 15, -3]],
+  "Розовый": [[32, 20, 0], [55, 24, -2], [76, 16, -2]],
 };
 export const HAIR_COLORS = Object.fromEntries(Object.entries(HAIR_PALETTES).map(([n, p]) => [n, p[1]])); // swatches
 export const HAIR_NAMES = ["Нет", ...Object.keys(HAIR_COLORS)];
@@ -109,7 +109,11 @@ const absDiff = (a, b) => I.mapPlane(a, (v, i) => Math.abs(v - b.data[i]));
 function dye(img, hair, fw, pal, k) {
   return labEdit(img, hair, fw, (lab, m) => {
     const { w, h } = m, n = w * h, L = chan(lab, 0);
-    const base = I.gaussian(L, Math.max(0.6, fw * 0.0015));
+    // the base below the strands: what is finer (strands, grain) is carried over, scaled with the new lightness
+    const base = I.gaussian(L, Math.max(1, fw * 0.008)); // strands and clumps of strands both read on light hair
+    // the sensor's grain (finer than a strand) is carried over as it was: amplified with the strands it made
+    // light dyes look grainy (dark hair hides it)
+    const fine = I.gaussian(L, Math.max(0.7, fw * 0.0012));
     // a flyaway hair on a light background is a mix — lighter than the hair, yet darker than what is
     // around it (the wall at the hair's edge is lighter than its surroundings, never darker)
     const around = I.gaussian(L, Math.max(1.5, fw * 0.006));
@@ -132,7 +136,7 @@ function dye(img, hair, fw, pal, k) {
     const texSel = [];
     for (let i = 0; i < n; i += 2) if (m.data[i] > 0.88) texSel.push(tex.data[i]);
     const hairTex = Math.max(0.3, I.percentile(texSel, 0.5)); // the hair's own (Lab L units)
-    const p05 = I.percentile(sel, 0.05), p50 = I.percentile(sel, 0.5), p95 = I.percentile(sel, 0.95);
+    const p05 = I.percentile(sel, 0.03), p50 = I.percentile(sel, 0.5), p95 = I.percentile(sel, 0.97);
     const meanA = sa[0] / ns, meanB = sa[1] / ns;
     let sdA = 0, sdB = 0, sdL = 0, mL = 0;
     for (const v of sel) mL += v;
@@ -142,7 +146,7 @@ function dye(img, hair, fw, pal, k) {
     for (let i = 0; i < n; i += 2) if (m.data[i] > 0.88) { sdA += (lab.data[3 * i + 1] - meanA) ** 2; sdB += (lab.data[3 * i + 2] - meanB) ** 2; }
     sdA = Math.max(3, Math.sqrt(sdA / ns)); sdB = Math.max(3, Math.sqrt(sdB / ns));
     const lo = Math.max(1, p50 - p05), hi = Math.max(1, p95 - p50);
-    const uOf = (v) => clip(v < p50 ? 0.5 - (0.5 * (p50 - v)) / lo : 0.5 + (0.5 * (v - p50)) / hi, -0.15, 1.15);
+    const uOf = (v) => clip(v < p50 ? 0.5 - (0.5 * (p50 - v)) / lo : 0.5 + (0.5 * (v - p50)) / hi, -0.35, 1.2); // the deepest shadows stay deeper than the dye's shadow
     const LOf = (u) => (u < 0.5 ? p50 - (0.5 - u) * 2 * lo : p50 + (u - 0.5) * 2 * hi);
     // the dye's tones, its contrast held near the hair's own
     const [S, M, H] = pal, spread = H[0] - S[0], own = p95 - p05;
@@ -180,7 +184,7 @@ function dye(img, hair, fw, pal, k) {
       // full mapping (inside the hair): the tone + the photo's grain, a little of the hair's own colour play
       // the strands' fine light and shade grows with the new lightness (it is a ratio: the same strands on
       // light hair are far more contrasty than on dark) — 1x left light dyes looking like a wig
-      const fL = T[0] + (Lv - bl) * clip((T[0] + 8) / (bl + 8), 1, 2.6), fA = T[1] + (A - meanA) * 0.25, fB = T[2] + (B - meanB) * 0.25;
+      const fL = T[0] + (fine.data[i] - bl) * clip((T[0] + 8) / (bl + 8), 1, 2.2) + (Lv - fine.data[i]) * 0.85, fA = T[1] + (A - meanA) * 0.25, fB = T[2] + (B - meanB) * 0.25;
       // a typical strand's change (the edge): the pixel keeps its mix, the hair part changes colour
       const ue = Math.min(u, 0.6), Te = tone(ue), dL = Te[0] - LOf(ue);
       const eL = Lv + dL, eA = A + (Te[1] - meanA), eB = B + (Te[2] - meanB);
