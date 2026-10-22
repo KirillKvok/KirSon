@@ -9,10 +9,22 @@ import { labEdit } from "./skin.js";
 import { chan } from "./tone.js";
 import { MAKEUP_TAB } from "./makeup.js";
 
-export const HAIR_COLORS = { "Шоколадный": [28, 9, 13], "Каштановый": [32, 15, 22], "Медный": [44, 22, 30],
-  "Блонд": [68, 3, 21], "Пепельный": [56, 0, 3], "Чёрный": [14, 1, 1], "Бордо": [27, 22, 6], "Розовый": [58, 24, 0] };
+// Each dye as real hair shows it: its shadow, middle and highlight (Lab). The hair's own light and shade is
+// mapped through these — a single target colour gave a flat painted look, dark hair dyed blond turned olive
+// in its shadows (yellow at low lightness) and chocolate came out ginger.
+export const HAIR_PALETTES = {
+  "Шоколадный": [[12, 4, 5], [22, 7, 9], [38, 8, 13]],
+  "Каштановый": [[14, 7, 8], [27, 11, 15], [44, 11, 19]],
+  "Медный": [[20, 16, 16], [38, 22, 28], [58, 18, 32]],
+  "Блонд": [[40, 5, 16], [60, 4, 20], [80, 2, 18]],
+  "Пепельный": [[32, 0, 2], [52, 0, 2], [72, -1, 1]],
+  "Чёрный": [[6, 1, 0], [12, 1, -1], [27, 0, -2]],
+  "Бордо": [[11, 13, 3], [22, 20, 5], [38, 20, 6]],
+  "Розовый": [[42, 20, -2], [60, 23, -3], [77, 15, -3]],
+};
+export const HAIR_COLORS = Object.fromEntries(Object.entries(HAIR_PALETTES).map(([n, p]) => [n, p[1]])); // swatches
 export const HAIR_NAMES = ["Нет", ...Object.keys(HAIR_COLORS)];
-const VOLUME_MAX = 0.08, MAX_LIFT = 30;
+const VOLUME_MAX = 0.08;
 const clip = (v, a = 0, b = 1) => (v < a ? a : v > b ? b : v);
 
 function rootsMask(img, ctx, hair, fw) {
@@ -85,6 +97,101 @@ function volumeField(img, ctx, hair, amount) {
   return field.empty ? null : field;
 }
 
+// The dye. Each pixel's place in the hair's own light and shade (u: 0 = its shadows, 0.5 = the middle,
+// 1 = its highlights, from the percentiles of the smoothed lightness) picks the dye's tone there, so the
+// depth between strands stays. The grain of the photo (lightness minus a ~1 px blur) is added back as it
+// was, in proportion to the new lightness (strands on light hair are more contrasty). The dye's contrast is
+// held to at most 2.5x the hair's own (dark flat hair dyed blond would otherwise show every jpeg block). On the matte's soft edge (mixed hair / skin / background pixels)
+// the change of a typical strand is added instead of mapping the pixel itself: a mixed lighter pixel mapped
+// to a highlight glowed as a rim.
+const absDiff = (a, b) => I.mapPlane(a, (v, i) => Math.abs(v - b.data[i]));
+
+function dye(img, hair, fw, pal, k) {
+  return labEdit(img, hair, fw, (lab, m) => {
+    const { w, h } = m, n = w * h, L = chan(lab, 0);
+    const base = I.gaussian(L, Math.max(0.6, fw * 0.0015));
+    // a flyaway hair on a light background is a mix — lighter than the hair, yet darker than what is
+    // around it (the wall at the hair's edge is lighter than its surroundings, never darker)
+    const around = I.gaussian(L, Math.max(1.5, fw * 0.006));
+    // the mass of the hair, for filling its holes: the models leave half-transparent streaks inside long
+    // hair, which a dye that follows the matte showed as stripes
+    const mass = I.gaussian(m, Math.max(2, fw * 0.03));
+    // texture: hair is strands (fine light and shade), a wall of the same colour behind it is smooth. On the
+    // soft edge of the matte where hair and background look alike (dark hair, dark wall) the models' blurry
+    // edge reached ~1 % of the photo into the wall, and a light dye glowed there
+    const strand = Math.max(0.8, fw * 0.004), tex = I.gaussian(absDiff(L, I.gaussian(L, strand)), strand * 3);
+    const sel = [], sa = [0, 0];
+    let ns = 0;
+    // the hair's own light and shade from its sure part (the soft edge mixes in the wall and the skin and
+    // made the highlights look higher than they are: the whole mass got squeezed into the shadows)
+    for (let i = 0; i < n; i += 2) if (m.data[i] > 0.88) {
+      sel.push(base.data[i]);
+      sa[0] += lab.data[3 * i + 1]; sa[1] += lab.data[3 * i + 2]; ns++;
+    }
+    if (sel.length < 50) return;
+    const texSel = [];
+    for (let i = 0; i < n; i += 2) if (m.data[i] > 0.88) texSel.push(tex.data[i]);
+    const hairTex = Math.max(0.3, I.percentile(texSel, 0.5)); // the hair's own (Lab L units)
+    const p05 = I.percentile(sel, 0.05), p50 = I.percentile(sel, 0.5), p95 = I.percentile(sel, 0.95);
+    const meanA = sa[0] / ns, meanB = sa[1] / ns;
+    let sdA = 0, sdB = 0, sdL = 0, mL = 0;
+    for (const v of sel) mL += v;
+    mL /= sel.length;
+    for (const v of sel) sdL += (v - mL) ** 2;
+    sdL = Math.max(6, Math.sqrt(sdL / sel.length));
+    for (let i = 0; i < n; i += 2) if (m.data[i] > 0.88) { sdA += (lab.data[3 * i + 1] - meanA) ** 2; sdB += (lab.data[3 * i + 2] - meanB) ** 2; }
+    sdA = Math.max(3, Math.sqrt(sdA / ns)); sdB = Math.max(3, Math.sqrt(sdB / ns));
+    const lo = Math.max(1, p50 - p05), hi = Math.max(1, p95 - p50);
+    const uOf = (v) => clip(v < p50 ? 0.5 - (0.5 * (p50 - v)) / lo : 0.5 + (0.5 * (v - p50)) / hi, -0.15, 1.15);
+    const LOf = (u) => (u < 0.5 ? p50 - (0.5 - u) * 2 * lo : p50 + (u - 0.5) * 2 * hi);
+    // the dye's tones, its contrast held near the hair's own
+    const [S, M, H] = pal, spread = H[0] - S[0], own = p95 - p05;
+    const kc = clip((own * 2.5) / Math.max(1, spread), 0.6, 1);
+    const tone = (u) => {
+      const [A, B, t] = u < 0.5 ? [S, M, u * 2] : [M, H, (u - 0.5) * 2];
+      const out = [A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t, A[2] + (B[2] - A[2]) * t];
+      out[0] = M[0] + (out[0] - M[0]) * kc;
+      return out;
+    };
+    const likeHair = (Lv, A, B) => {
+      const l = Lv < mL ? mL - (mL - Lv) * 0.3 : Lv;
+      const d = ((l - mL) / sdL) ** 2 * (Lv > mL ? 1.7 : 0.5) + ((A - meanA) / sdA) ** 2 + ((B - meanB) / sdB) ** 2;
+      return clip((16 - d) / 8);
+    };
+    for (let i = 0; i < n; i++) {
+      const j = 3 * i, Lv = lab.data[j], A = lab.data[j + 1], B = lab.data[j + 2], bl = base.data[i];
+      let mm = m.data[i];
+      const fill = clip((mass.data[i] - 0.8) / 0.15); // deep inside the mass only (its outer edge borders dark backgrounds)
+      if (fill > 0 && mm < 0.95) mm = Math.max(mm, fill * likeHair(Lv, A, B));
+      if (mm <= 0.06) continue;
+      const core = clip((mm - 0.6) / 0.35);
+      // the matte is the pixel's share of hair: the dye follows it nearly linearly; on the soft edge only
+      // hair-like pixels take it; far brighter than the hair = a lit wall caught by the mask
+      const stray = clip((around.data[i] - Lv - 6) / 10); // a strand stands out; the grain of a dark wall does not
+      const textured = clip(tex.data[i] / (0.45 * hairTex)); // smooth = a wall, not hair
+      // deep inside the mass every pixel is dyed (smooth sheen, out-of-focus hair); towards its edge a smooth
+      // pixel is a wall, whatever the mask says
+      const deep = clip((mass.data[i] - 0.85) / 0.1);
+      const gate = deep + (1 - deep) * Math.max(textured * (core + (1 - core) * likeHair(Lv, A, B)), stray);
+      const wgt = clip((mm - 0.06) / 0.86) * gate * k
+        * Math.max(stray, clip(1 - (Lv - mL - 25) / 20));
+      if (wgt <= 0) continue;
+      const u = uOf(bl), T = tone(u);
+      // full mapping (inside the hair): the tone + the photo's grain, a little of the hair's own colour play
+      // the strands' fine light and shade grows with the new lightness (it is a ratio: the same strands on
+      // light hair are far more contrasty than on dark) — 1x left light dyes looking like a wig
+      const fL = T[0] + (Lv - bl) * clip((T[0] + 8) / (bl + 8), 1, 2.6), fA = T[1] + (A - meanA) * 0.25, fB = T[2] + (B - meanB) * 0.25;
+      // a typical strand's change (the edge): the pixel keeps its mix, the hair part changes colour
+      const ue = Math.min(u, 0.6), Te = tone(ue), dL = Te[0] - LOf(ue);
+      const eL = Lv + dL, eA = A + (Te[1] - meanA), eB = B + (Te[2] - meanB);
+      const nL = eL + (fL - eL) * core, nA = eA + (fA - eA) * core, nB = eB + (fB - eB) * core;
+      lab.data[j] = Lv + wgt * (clip(nL, 0, 100) - Lv);
+      lab.data[j + 1] = A + wgt * (nA - A);
+      lab.data[j + 2] = B + wgt * (nB - B);
+    }
+  });
+}
+
 register("hair", "Волосы", [choice("color", "Цвет волос", HAIR_NAMES, 0), P("amount", "Сила цвета", 0, 100, 70),
   P("shine", "Блеск", 0, 100, 0), P("volume", "Объём", 0, 100, 0), P("roots", "Закрасить корни", 0, 100, 0),
   P("thick", "Гуще", 0, 100, 0)],
@@ -109,47 +216,7 @@ register("hair", "Волосы", [choice("color", "Цвет волос", HAIR_NA
       }
     }
     if (p.thick > 0) out = thicker(out, hair, fw, p.thick / 100); // before the dye: gaps take the new colour too
-    if (p.color > 0 && p.amount > 0) {
-      const [tL, ta, tb] = HAIR_COLORS[HAIR_NAMES[p.color]], k = p.amount / 100;
-      out = labEdit(out, hair, fw, (lab, m) => {
-        let sL = 0, sa = 0, sb = 0, n = 0, qL = 0, qa = 0, qb = 0;
-        for (let i = 0; i < m.data.length; i++) if (m.data[i] > 0.5) {
-          const L = lab.data[3 * i], A = lab.data[3 * i + 1], B = lab.data[3 * i + 2];
-          sL += L; sa += A; sb += B; qL += L * L; qa += A * A; qb += B * B; n++;
-        }
-        if (!n) return;
-        const meanL = sL / n, meanA = sa / n, meanB = sb / n;
-        const sdL = Math.max(6, Math.sqrt(Math.max(0, qL / n - meanL * meanL)));
-        const sdA = Math.max(3, Math.sqrt(Math.max(0, qa / n - meanA * meanA))), sdB = Math.max(3, Math.sqrt(Math.max(0, qb / n - meanB * meanB)));
-        // how much a pixel looks like this hair (its shadows count as hair: lightness below the mean is
-        // lenient). On the mask's soft edge only such pixels take the dye — the wall or the forehead next
-        // to the hair kept their own colour (a lifted blond glowed around the head like a sticker's outline)
-        const likeHair = (L, A, B) => {
-          const l = L < meanL ? meanL - (meanL - L) * 0.3 : L;
-          const d = ((l - meanL) / sdL) ** 2 * (L > meanL ? 1.7 : 0.5) + ((A - meanA) / sdA) ** 2 + ((B - meanB) / sdB) ** 2;
-          return clip((16 - d) / 8);
-        };
-        const newMean = clip(tL, meanL - 25, meanL + MAX_LIFT);
-        const gain = clip(Math.sqrt(newMean / Math.max(meanL, 1)), 1, 2.5); // strands stay visible
-        for (let i = 0; i < m.data.length; i++) {
-          const j = 3 * i, L = lab.data[j], mm = m.data[i];
-          // the mask is a matte now (masks.js unmix: its value is the pixel's share of hair): the dye follows
-          // it nearly linearly — a steep curve gave a half-hair edge pixel full colour (a rim)
-          const t = clip((mm - 0.06) / 0.86);
-          // far brighter than the hair itself = background caught by the mask (a lit wall)
-          const core = clip((mm - 0.6) / 0.35), gate = core + (1 - core) * likeHair(L, lab.data[j + 1], lab.data[j + 2]);
-          const w = t * gate * k * clip(1 - (L - meanL - 25) / 20);
-          // a pixel lighter than the hair's mass (a highlight, or a mix of hair and skin / background at the
-          // edge) gets the shift of a typical light strand, not an amplified one: scaling its distance from the
-          // mean lifted the mixed edge pixels above both sides — a glowing rim around dyed hair
-          const Lh = Math.min(L, meanL + sdL), nL = clip(newMean + (Lh - meanL) * gain, 0, 100);
-          lab.data[j] = L + w * (nL - Lh);
-          const c = clip(nL / Math.max(tL, 1), 0.25, 1); // dark strands less saturated
-          lab.data[j + 1] += w * (ta * c + (lab.data[j + 1] - meanA) * 0.4 * gain - lab.data[j + 1]);
-          lab.data[j + 2] += w * (tb * c + (lab.data[j + 2] - meanB) * 0.4 * gain - lab.data[j + 2]);
-        }
-      });
-    }
+    if (p.color > 0 && p.amount > 0) out = dye(out, hair, fw, HAIR_PALETTES[HAIR_NAMES[p.color]], p.amount / 100);
     if (p.shine > 0) {
       const k = p.shine / 100, sigma = Math.max(1, fw * 0.01);
       out = labEdit(out, hair, fw, (lab, m) => {

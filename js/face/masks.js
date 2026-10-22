@@ -89,6 +89,26 @@ function shape(indexLists, featherK, grow = 0) {
   };
 }
 
+// brows and eyes, kept out of the hair dye — always both. A face turned sideways keeps its far side with a
+// small margin only: its landmarks there are precise, and the wide margin also covered the temple's hair
+// (in profile it stayed undyed); a near-frontal margin covers lashes and brow hairs beyond the landmarks.
+function visibleFeatures(roi) {
+  const p = roi.pts, nose = p[T.NOSE_TIP];
+  const dl = Math.hypot(p[T.CHEEK_LEFT][0] - nose[0], p[T.CHEEK_LEFT][1] - nose[1]);
+  const dr = Math.hypot(p[T.CHEEK_RIGHT][0] - nose[0], p[T.CHEEK_RIGHT][1] - nose[1]);
+  const turn = Math.min(dl, dr) / Math.max(dl, dr, 1e-6);
+  // the eyes with a wider margin than the brows: long outer lashes reach ~0.08 of the face width
+  const side = (brow, eye, k) => {
+    const a = shape([brow], 0.05 * k, 0.055 * k)(roi), b = shape([eye], 0.03 * k, 0.12 * k)(roi);
+    for (let i = 0; i < a.data.length; i++) a.data[i] = Math.max(a.data[i], b.data[i]);
+    return a;
+  };
+  const L = (k) => side(T.LEFT_BROW, T.LEFT_EYE, k), R = (k) => side(T.RIGHT_BROW, T.RIGHT_EYE, k);
+  const [a, b] = turn >= 0.45 ? [L(1), R(1)] : dl > dr ? [L(1), R(0.4)] : [R(1), L(0.4)];
+  for (let i = 0; i < a.data.length; i++) a.data[i] = Math.max(a.data[i], b.data[i]);
+  return a;
+}
+
 function lipsGeo(roi) {
   const c = new Canvas(roi.w, roi.h).poly(pick(roi.pts, T.LIPS_OUTER)).poly(pick(roi.pts, T.LIPS_INNER), 0);
   return feather(c.plane(), 0.006 * roi.fw);
@@ -354,8 +374,14 @@ function hair(img, ctx) {
   const reach = I.resizeLinear(I.gaussian(dilate(I.mapPlane(I.resize(hc, sw, sh), (v) => (v > 0.35 ? 1 : 0)),
     Math.max(1, Math.round(Math.max(sw, sh) * 0.05))), 1.5), img.w, img.h);
   const edge = perFace(shape([T.FACE_OVAL], 0.05, 0.15))(img, ctx);
+  // inside the face outline or what the parsing calls skin, right next to the sure hair (a temple seen in
+  // profile: no model sees hair there; the colour model below decides)
+  const inner = perFace(shape([T.FACE_OVAL], 0.02, 0.01))(img, ctx);
+  const close = I.resizeLinear(I.gaussian(dilate(I.mapPlane(I.resize(hc, sw, sh), (v) => (v > 0.35 ? 1 : 0)),
+    Math.max(1, Math.round(Math.max(sw, sh) * 0.025))), 1), img.w, img.h);
   for (let i = 0; i < reach.data.length; i++)
-    reach.data[i] *= Math.min(1, near.data[i] * 1.5) * Math.min(1, Math.max(fresh.data[i] * 5, p ? p.data[i] * 1.5 : 0, edge.data[i]));
+    reach.data[i] *= Math.min(1, near.data[i] * 1.5)
+      * Math.min(1, Math.max(fresh.data[i] * 5, p ? p.data[i] * 1.5 : 0, edge.data[i], Math.max(inner.data[i], skin.data[i]) * close.data[i]));
   // long hair lying on the shoulders: both hair models lose it there and the dye stopped across the strands.
   // Further down (to ~14 % of the photo below the confident hair) hair-coloured pixels count too — but only
   // inside the person's silhouette (a dark curtain behind is not hair) and not on bare skin
@@ -368,9 +394,60 @@ function hair(img, ctx) {
   }
   // inside the face's own outline (landmarks) the parsing's skin is trusted as it is: a shadowed
   // face edge looks hair-like by colour and got a light rim when dyed blond
-  const inner = perFace(shape([T.FACE_OVAL], 0.02, 0.01))(img, ctx);
-  hairColour(img, h, skin, reach, inner);
-  return softHair(img, h);
+  // inside the face outline the dye must not grow onto the brows, lashes and eyes — only they are kept out
+  // (the whole outline kept out a dark strip of real hair at the hairline, in profile most of all)
+  const features = perFace(visibleFeatures)(img, ctx);
+  // the head (parsed as skin, coloured unlike skin) may join the hair further from it: skin is cut by colour
+  const closeHead = I.resizeLinear(I.gaussian(dilate(I.mapPlane(I.resize(hc, sw, sh), (v) => (v > 0.35 ? 1 : 0)),
+    Math.max(1, Math.round(Math.max(sw, sh) * 0.07))), 1.5), img.w, img.h);
+  hairColour(img, h, skin, reach, inner, features, closeHead);
+  const out = softHair(img, h);
+  strays(img, ctx, out, features);
+  // last of all, whatever the rules above found: never the brows, lashes or eyes
+  for (let i = 0; i < out.data.length; i++) out.data[i] *= 1 - features.data[i];
+  return out;
+}
+
+// Flyaway hairs: thin strands crossing a lighter background next to the hair. No model sees them, so they
+// stayed dark beside a dyed mass — a wig's edge. Within ~0.2 of the face width from the hair (never inside
+// the face outline: brows, lashes), a pixel darker than its own surroundings (a thin line, not a large dark
+// area) and coloured like the hair's darker part joins the mask by how much darker it is.
+function strays(img, ctx, m, inner) {
+  const a = getAnalysis(ctx);
+  if (!a.faces.length) return;
+  const fw = Math.max(...a.faces.map((f) => faceWidth(f, img.w, img.h)));
+  const b = I.bbox(m, Math.round(fw * 0.22) + 4, 0.5);
+  if (!b) return;
+  const w = b.x1 - b.x0, hgt = b.y1 - b.y0, n = w * hgt;
+  const lum = lumOf(img, b), mc = I.crop(m, b), px = img.data, k255 = 1 / 255;
+  const rb = (x, y) => { const o = 3 * ((b.y0 + y) * img.w + b.x0 + x); return (px[o] - px[o + 2]) * k255; };
+  const local = I.gaussian(lum, Math.max(1.5, fw * 0.006));
+  const ks = Math.min(1, 400 / Math.max(w, hgt)), wsw = Math.max(2, Math.round(w * ks)), wsh = Math.max(2, Math.round(hgt * ks));
+  const wide = I.resizeLinear(I.gaussian(I.resize(lum, wsw, wsh), Math.max(1, fw * 0.03 * ks)), w, hgt); // smooth: small copy
+  // near the hair: the sure hair grown by 0.12 fw (on a small copy)
+  const s = Math.min(1, 300 / Math.max(w, hgt)), sw = Math.max(2, Math.round(w * s)), sh = Math.max(2, Math.round(hgt * s));
+  const sure = I.resize(I.mapPlane(mc, (v) => (v > 0.5 ? 1 : 0)), sw, sh);
+  const near = I.resizeLinear(I.gaussian(dilate(I.mapPlane(sure, (v) => (v > 0.3 ? 1 : 0)), Math.max(1, Math.round(fw * 0.2 * s))), 1.5), w, hgt);
+  // the hair's dark tone (its 30th percentile) and colour, for «coloured like the hair»
+  const dark = [], ca = [];
+  for (let i = 0; i < n; i += 3) if (mc.data[i] > 0.9) { const x = i % w; dark.push(lum.data[i]); ca.push(rb(x, (i - x) / w)); }
+  if (dark.length < 50) return;
+  const hairL = I.percentile(dark, 0.3), hairRB = I.percentile(ca, 0.5);
+  for (let y = 0; y < hgt; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x, j = (b.y0 + y) * img.w + b.x0 + x;
+      if (near.data[i] <= 0.05 || inner.data[j] > 0.05) continue;
+      const line = local.data[i] - lum.data[i]; // darker than its surroundings
+      const thin = clip01((wide.data[i] - lum.data[i] + 0.02) / 0.06); // and not inside a large dark area only
+      const tone = clip01(1 - (lum.data[i] - hairL - 0.45) / 0.25); // a thin hair is mixed with the light behind it
+      const hue = clip01(1 - Math.abs(rb(x, y) - hairRB) / 0.35);
+      // its share of hair: how much darker than its surroundings, against how dark the hair itself is (the
+      // surroundings' blur holds the strand too: ×1.3); times how sure it is a strand at all
+      const share = clip01((1.3 * line) / Math.max(0.05, local.data[i] - hairL));
+      const sure = clip01((line - 0.03) / 0.04) * thin * tone * hue * near.data[i] * (1 - inner.data[j]);
+      const v = Math.min(0.9, share * sure);
+      if (v > m.data[j]) m.data[j] = v;
+    }
 }
 
 // The hair's edge as a soft matte: a wider guided filter with a larger eps than `snap` — single strands and
@@ -380,10 +457,10 @@ function softHair(img, conf) {
   const L = Math.max(img.w, img.h), radius = Math.max(2, L * 0.006);
   const b = I.bbox(conf, Math.round(3 * radius) + 2);
   if (!b) return I.plane(img.w, img.h);
-  const gray = I.luminance(roiFloat(img, b));
+  const gray = lumOf(img, b); // straight from the bytes: no float RGB copy of the hair's box (12 MP: ~100 MB)
   const m = I.clamp01(I.guidedFast(gray, I.crop(conf, b), radius, 2e-3, L > 2000 ? 0.5 : 1));
   const soft = I.clamp01(I.gaussian(m, Math.max(0.6, L * 0.0008)));
-  unmix(roiFloat(img, b), soft, L);
+  unmix(img, b, soft, L);
   const out = I.plane(img.w, img.h);
   I.paste(out, soft, b);
   return out;
@@ -394,13 +471,13 @@ function softHair(img, conf) {
 // α = (I − B)·(F − B) / |F − B|². Where F and B are far apart (dark hair on a grey wall, hair over the
 // forehead) that α replaces the mask — the wall stops being dyed (a glowing outline around the head);
 // where they look alike (dark hair on a dark curtain) the mask stays.
-function unmix(f, m, L) {
-  const { w, h } = m, n = w * h, sigma = Math.max(1.5, L * 0.008);
+function unmix(img, box, m, L) {
+  const { w, h } = m, n = w * h, sigma = Math.max(1.5, L * 0.008), px = img.data, k255 = 1 / 255;
   const sure = I.plane(w, h), bg = I.plane(w, h);
   for (let i = 0; i < n; i++) { sure.data[i] = m.data[i] > 0.92 ? 1 : 0; bg.data[i] = m.data[i] < 0.04 ? 1 : 0; }
   // the two colours around each pixel, on a quarter-size copy (they are smooth)
   const s = Math.min(1, 400 / Math.max(w, h)), sw = Math.max(2, Math.round(w * s)), sh = Math.max(2, Math.round(h * s));
-  const small = I.resize(f, sw, sh), ws = I.resize(sure, sw, sh), wb = I.resize(bg, sw, sh);
+  const small = I.resize(I.cropFloat(img, box), sw, sh), ws = I.resize(sure, sw, sh), wb = I.resize(bg, sw, sh);
   // kept small and read bilinearly per pixel: full-size colour planes of a 12 MP photo were ~200 MB
   // (iPhone Safari closes the tab over its limit)
   const mean = (wt) => {
@@ -429,24 +506,40 @@ function unmix(f, m, L) {
     const zone = Math.min(1, Math.max(0, (0.985 - deep.data[i]) / 0.12));
     if (v <= 0.02 || zone <= 0) continue;
     const x = i % w, y = (i - x) / w;
-    if (read(F, fd, x, y, fc) < 0.01 || read(B, bd, x, y, bc) < 0.01) continue;
+    if (read(F, fd, x, y, fc) < 0.01 || read(B, bd, x, y, bc) < 0.01) continue; // no colours to compare
+    const o = 3 * ((box.y0 + y) * img.w + box.x0 + x);
     let dot = 0, len = 0;
     for (let c = 0; c < 3; c++) {
       const fb = fc[c] - bc[c];
-      dot += (f.data[3 * i + c] - bc[c]) * fb;
+      dot += (px[o + c] * k255 - bc[c]) * fb;
       len += fb * fb;
     }
     const sep = Math.sqrt(len), trust = Math.min(1, Math.max(0, (sep - 0.06) / 0.1));
-    if (trust <= 0) continue;
-    const a = Math.min(1, Math.max(0, dot / len));
+    // hair and background alike (dark hair, dark wall): colour cannot tell them apart, and an edge between
+    // two equal colours is not seen — so the models' blurry edge (hundreds of px into the wall on a 12 MP
+    // photo, which a light dye turned into a haze) is made steep around its middle
+    let t = (v - 0.4) / 0.25;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const steep = t * t * (3 - 2 * t);
+    const a = len > 1e-6 ? Math.min(1, Math.max(0, dot / len)) : v;
     // never more hair than the models allowed (+15 %)
-    m.data[i] = v + trust * zone * (Math.min(v * 1.15, a) - v);
+    m.data[i] = v + zone * (trust * (Math.min(v * 1.15, a) - v) + (1 - trust) * (steep - v));
   }
   // per-pixel α is noisy (grain, jpeg): a light blur, so the edge is soft and whole, not speckled
-  const sm = I.gaussian(m, Math.max(0.6, L * 0.0005)); // small: a wider blur put a rim of dye on the cheek
+  const sm = I.gaussian(m, Math.max(0.6, L * 0.0015)); // small (a wider blur put a rim of dye on the cheek)
   m.data.set(sm.data);
 }
 const clip01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+// luminance (0..1) of a box of a uint8 RGB image, without a float RGB copy
+function lumOf(img, b) {
+  const w = b.x1 - b.x0, h = b.y1 - b.y0, out = I.plane(w, h), d = img.data, k = 1 / 255;
+  for (let y = 0; y < h; y++) {
+    let o = 3 * ((b.y0 + y) * img.w + b.x0), i = y * w;
+    for (let x = 0; x < w; x++, o += 3, i++) out.data[i] = (0.2126 * d[o] + 0.7152 * d[o + 1] + 0.0722 * d[o + 2]) * k;
+  }
+  return out;
+}
 
 // what is surely not hair: the parsing's skin, nose, ears, neck (sharp) and the segmenter's face / body
 // skin (256 px, blurry: only where it is sure)
@@ -466,7 +559,7 @@ function hairSkin(img, ctx) {
 // inside `reach` a pixel goes to the class it looks most like. Long hair the hair model saw only in
 // blotches is filled; forehead, temples, an ear in profile — where the models overreach — are let go;
 // where the background has the hair's colour, the hair model's own answer stays.
-function hairColour(img, h, skin, reach, inner) {
+function hairColour(img, h, skin, reach, inner, features, close) {
   const b = I.bbox(I.mapPlane(reach, (v, i) => Math.max(v, h.data[i])), 2, 0.05);
   if (!b) return;
   // the colour classes on a small copy (at most 900 px): a 12 MP export kept 300 MB of Lab otherwise
@@ -486,7 +579,12 @@ function hairColour(img, h, skin, reach, inner) {
   const hs = st(), bs = st(), sk = [[], [], []];
   for (let i = 0; i < ln; i++) {
     const j = at[i], L = lab.data[3 * i], A = lab.data[3 * i + 1], B = lab.data[3 * i + 2];
-    if (skin.data[j] > 0.8) { sk[0].push(L); sk[1].push(A); sk[2].push(B); continue; }
+    if (skin.data[j] > 0.8) {
+      // the skin's colour from inside the face outline only: in profile the parsing calls the temple's hair
+      // skin too, and a half-dark «skin» made that hair look like skin (it stayed undyed)
+      if (inner.data[j] > 0.5) { sk[0].push(L); sk[1].push(A); sk[2].push(B); }
+      continue;
+    }
     const s = h.data[j] > 0.75 ? hs : h.data[j] < 0.03 && reach.data[j] < 0.5 ? bs : null;
     if (!s) continue;
     s.n++; s.L += L; s.a += A; s.b += B; s.LL += L * L; s.aa += A * A; s.bb += B * B;
@@ -514,7 +612,7 @@ function hairColour(img, h, skin, reach, inner) {
   // lighter than the hair counts double (a grey shadow on a white shirt is not dark hair)
   const dHair = (L, A, Bb) => (L < H[0][0] ? d2(H[0][0] - (H[0][0] - L) * 0.4, A, Bb, H) : d2(L, A, Bb, H) + ((L - H[0][0]) / H[1][0]) ** 2 * 1.2);
   const clip = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
-  const OVR = I.fimg(lw, lh, 1), GROW = I.fimg(lw, lh, 1), CUT = I.fimg(lw, lh, 1);
+  const OVR = I.fimg(lw, lh, 1), GROW = I.fimg(lw, lh, 1), CUT = I.fimg(lw, lh, 1), NOTSKIN = I.fimg(lw, lh, 1);
   for (let i = 0; i < ln; i++) {
     const L = lab.data[3 * i], A = lab.data[3 * i + 1], Bb = lab.data[3 * i + 2];
     const dh = dHair(L, A, Bb), eh = Math.exp(-dh / 2), es = S ? Math.exp(-d2(L, A, Bb, S) / 2) : 0, eb = B ? Math.exp(-d2(L, A, Bb, B) / 2) : 0;
@@ -524,6 +622,7 @@ function hairColour(img, h, skin, reach, inner) {
     OVR.data[i] = clip((pHair - pSkin) / 0.5); // «skin» that clearly looks like this hair
     GROW.data[i] = clip((pHair - 0.3) / 0.45) * like; // hair-coloured: filled in proportion
     CUT.data[i] = clip((pSkin - 0.5) / 0.3); // skin-coloured: out
+    NOTSKIN.data[i] = S ? clip((d2(L, A, Bb, S) - 9) / 9) : 0; // far from the skin's colour (> 3 sigma)
   }
   const sample = (P, x, y) => { // bilinear, low-res pixel centres
     const fx = Math.min(lw - 1, Math.max(0, (x + 0.5) * k - 0.5)), fy = Math.min(lh - 1, Math.max(0, (y + 0.5) * k - 0.5));
@@ -537,9 +636,17 @@ function hairColour(img, h, skin, reach, inner) {
       if (r <= 0 && h.data[j] <= 0 && skin.data[j] <= 0) continue;
       // what the models call skin stays skin — unless it clearly looks like this hair; inside the face's
       // own outline (landmarks) the parsing is trusted as it is
-      const sk = Math.max(skin.data[j] * (1 - sample(OVR, x, y)), skin.data[j] * inner.data[j]);
-      const grow = r * (1 - sk) * (1 - inner.data[j]) * sample(GROW, x, y);
-      h.data[j] = Math.max(h.data[j] * (1 - sk), grow) * (1 - sample(CUT, x, y));
+      // (inside it only strong evidence overrides: the hair's very edge, which the parsing calls skin, stayed
+      // a dark line at the hairline; a merely shadowed face edge stays skin)
+      const ovr = sample(OVR, x, y), strong = Math.min(1, Math.max(0, (ovr - 0.6) / 0.4));
+      const sk = skin.data[j] * Math.max(1 - ovr, inner.data[j] * (1 - strong));
+      const grow = r * (1 - sk) * (1 - features.data[j]) * sample(GROW, x, y);
+      // what the parsing calls skin (so: part of the head, not the background) yet is far from the skin's
+      // colour, right next to the sure hair, is hair — a lit temple in profile looked more like the dark door
+      // behind than like the hair mass, and stayed undyed
+      // (outside the face outline only: inside, the parsing calls the lashes skin too — dark, «not skin»)
+      const head = skin.data[j] * close.data[j] * (1 - features.data[j]) * (1 - inner.data[j]) * sample(NOTSKIN, x, y);
+      h.data[j] = Math.max(h.data[j] * (1 - sk), grow, head) * (1 - sample(CUT, x, y));
     }
 }
 
