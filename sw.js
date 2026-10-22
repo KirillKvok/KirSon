@@ -1,6 +1,6 @@
 // Offline: the app shell, libraries and models are cached on the first visit; later visits
 // work without the internet. Bump VERSION when files change, so phones get the update.
-const VERSION = "kirson-ea98a991b7c1";
+const VERSION = "kirson-6b9b302c84a3";
 const CORE = [
   "./",
   "js/version.js",
